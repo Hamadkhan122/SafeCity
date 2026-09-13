@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "13235990227",
+    "project_id": "safecity-2e8bd",
+    "storage_bucket": "safecity-2e8bd.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:13235990227:android:f46bb25378e9012686ee26",
+        "android_client_info": {
+          "package_name": "com.example.safecity"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDpEp1qjliXVwjwH3lgZIf4sXCTHwCKMcg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
