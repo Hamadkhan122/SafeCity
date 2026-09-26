@@ -21,8 +21,8 @@ class EtaCard extends StatelessWidget {
     if (distanceText.isEmpty) return const SizedBox();
 
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      padding: const EdgeInsets.all(18),
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
@@ -115,13 +115,17 @@ class EtaCard extends StatelessWidget {
                     child: const Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.navigation, color: Colors.green),
-                        SizedBox(width: 6),
-                        Text(
-                          "Navigating",
-                          style: TextStyle(
-                            color: Colors.green,
-                            fontWeight: FontWeight.bold,
+                        Icon(Icons.navigation, color: Colors.green, size: 18),
+                        SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            "Navigating",
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.green,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                       ],
