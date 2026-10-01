@@ -19,8 +19,6 @@ class NotificationTile extends StatelessWidget {
         return Colors.red;
       case "Fire":
         return Colors.orange;
-      case "Theft":
-        return Colors.purpleAccent;
       case "Road Damage":
         return Colors.green;
       case "Fight":
@@ -38,8 +36,6 @@ class NotificationTile extends StatelessWidget {
         return Icons.car_crash;
       case "Fire":
         return Icons.local_fire_department;
-      case "Theft":
-        return Icons.report;
       case "Road Damage":
         return Icons.construction;
       case "Fight":

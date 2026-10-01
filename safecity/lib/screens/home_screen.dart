@@ -2,17 +2,24 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:geolocator/geolocator.dart';
 import 'login_screen.dart';
 import 'map_screen.dart';
 import 'report_screen.dart';
 import 'profile_screen.dart';
 import 'sos_screen.dart';
+import 'heatmap_screen.dart';
 import 'notification_screen.dart';
 import 'my_reports_screen.dart';
+import 'incident_history_screen.dart';
+import 'safetyscore_screen.dart';
+import '../services/safety_score_service.dart';
 import '../models/notification_model.dart';
 import '../services/notification_service.dart';
 import '../widgets/notification_badge.dart';
 import '../widgets/notification_banner.dart';
+import '../widgets/sos_chat_banner.dart';
+import '../services/settings_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -37,7 +44,6 @@ class _HomeScreenState extends State<HomeScreen> {
   static const Map<String, IconData> _categoryIcons = {
     "Accident": Icons.car_crash,
     "Fire": Icons.local_fire_department,
-    "Theft": Icons.report,
     "Road Damage": Icons.construction,
     "Fight": Icons.front_hand,
     "Harassment": Icons.person_off,
@@ -46,7 +52,6 @@ class _HomeScreenState extends State<HomeScreen> {
   static const Map<String, Color> _categoryColors = {
     "Accident": Colors.redAccent,
     "Fire": Colors.orangeAccent,
-    "Theft": Colors.purpleAccent,
     "Road Damage": Colors.brown,
     "Fight": Colors.deepOrange,
     "Harassment": Colors.pinkAccent,
@@ -56,6 +61,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     setGreeting();
+    _loadLastPosition();
     _screenOpenedAt = DateTime.now();
 
     // Only show the banner for notifications created *after* this screen
@@ -72,6 +78,9 @@ class _HomeScreenState extends State<HomeScreen> {
           notif.createdAt!.isBefore(_screenOpenedAt)) {
         return;
       }
+
+      // Settings -> Incident Alerts OFF: no banner.
+      if (!AppSettings.incidentAlerts.value) return;
 
       if (mounted) {
         setState(() => _bannerNotification = notif);
@@ -139,7 +148,7 @@ class _HomeScreenState extends State<HomeScreen> {
       borderRadius: BorderRadius.circular(22),
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: Colors.white.withOpacity(.10),
           borderRadius: BorderRadius.circular(22),
@@ -166,21 +175,68 @@ class _HomeScreenState extends State<HomeScreen> {
             const Spacer(),
             Text(
               title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.bold,
-                fontSize: 18,
+                fontSize: 17,
               ),
             ),
-            const SizedBox(height: 5),
+            const SizedBox(height: 4),
             Text(
               subtitle,
-              style: const TextStyle(color: Colors.white70, fontSize: 13),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
             ),
           ],
         ),
       ),
     );
+  }
+
+  // Last known location (instant, no GPS wait) -> "x km away" on cards.
+  Position? _lastPosition;
+
+  Future<void> _loadLastPosition() async {
+    try {
+      final perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied ||
+          perm == LocationPermission.deniedForever) {
+        return;
+      }
+      final p = await Geolocator.getLastKnownPosition();
+      if (p != null && mounted) setState(() => _lastPosition = p);
+    } catch (_) {}
+  }
+
+  String _distanceText(Map<String, dynamic> data) {
+    if (_lastPosition == null ||
+        data["latitude"] == null ||
+        data["longitude"] == null) {
+      return "";
+    }
+    final d = Geolocator.distanceBetween(
+      _lastPosition!.latitude,
+      _lastPosition!.longitude,
+      (data["latitude"] as num).toDouble(),
+      (data["longitude"] as num).toDouble(),
+    );
+    return d < 1000
+        ? "${d.toStringAsFixed(0)} m away"
+        : "${(d / 1000).toStringAsFixed(1)} km away";
+  }
+
+  Color _statusColor(String status) {
+    switch (status) {
+      case "Verified":
+        return Colors.greenAccent;
+      case "Partially Verified":
+        return Colors.orangeAccent;
+      default:
+        return Colors.white54;
+    }
   }
 
   Widget _recentIncidentCard(Map<String, dynamic> data) {
@@ -196,8 +252,11 @@ class _HomeScreenState extends State<HomeScreen> {
       address,
       timeText,
     ].where((e) => e.isNotEmpty).join(" • ");
+    final distance = _distanceText(data);
+    final status = (data["status"] ?? "Pending").toString();
+    final isMine = user != null && data["userId"] == user!.uid;
 
-    return Container(
+    final card = Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(.10),
@@ -230,11 +289,90 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(height: 4),
                 Text(
                   subtitle.isNotEmpty ? subtitle : "Just now",
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: Colors.white70),
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    _chip(status, _statusColor(status)),
+                    if (distance.isNotEmpty)
+                      _chip(distance, Colors.lightBlueAccent),
+                    if (isMine) _chip("Your report", Colors.white),
+                  ],
                 ),
               ],
             ),
           ),
+          const Icon(Icons.chevron_right, color: Colors.white38),
+        ],
+      ),
+    );
+
+    // Tap -> open the incident on the Live Map.
+    return InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: () {
+        if (data["latitude"] == null || data["longitude"] == null) return;
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => MapScreen(
+              focusLat: (data["latitude"] as num).toDouble(),
+              focusLng: (data["longitude"] as num).toDouble(),
+              focusTitle: category,
+              focusSnippet: (data["description"] ?? address).toString(),
+            ),
+          ),
+        );
+      },
+      child: card,
+    );
+  }
+
+  Widget _chip(String text, Color color) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: color.withValues(alpha: 0.6)),
+        ),
+        child: Text(
+          text,
+          style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600),
+        ),
+      );
+
+  // Tabs are created the first time they are opened, then kept alive.
+  final Set<int> _openedTabs = {0};
+
+  void _goToTab(int index) {
+    setState(() {
+      currentIndex = index;
+      _openedTabs.add(index);
+    });
+  }
+
+  Widget _buildTabs(Widget homeBody) {
+    Widget tab(int i, Widget Function() build) =>
+        _openedTabs.contains(i) ? build() : const SizedBox.shrink();
+
+    return PopScope(
+      // Android back on Map/Report/Profile -> go to Home tab first.
+      canPop: currentIndex == 0,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && currentIndex != 0) _goToTab(0);
+      },
+      child: IndexedStack(
+        index: currentIndex,
+        children: [
+          homeBody,
+          tab(1, () => const MapScreen()),
+          tab(2, () => const ReportScreen()),
+          tab(3, () => const ProfileScreen()),
         ],
       ),
     );
@@ -245,7 +383,10 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       backgroundColor: const Color(0xff071B52),
 
-      body: Stack(
+      // Persistent bottom navigation: Home / Map / Report / Profile live in
+      // one IndexedStack, so the navbar stays visible on all four tabs and
+      // the map isn't reloaded every time.
+      body: _buildTabs(Stack(
         children: [
           Container(
             decoration: const BoxDecoration(
@@ -300,13 +441,32 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             ),
                             const SizedBox(height: 5),
-                            Text(
-                              user?.email ?? "SafeCity User",
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 22,
-                                fontWeight: FontWeight.bold,
-                              ),
+                            // Shows the profile name (editable in Profile),
+                            // falls back to email like before.
+                            StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                              stream: user == null
+                                  ? null
+                                  : FirebaseFirestore.instance
+                                      .collection("users")
+                                      .doc(user!.uid)
+                                      .snapshots(),
+                              builder: (context, snap) {
+                                final name = (snap.data?.data()?["fullName"] ?? "")
+                                    .toString()
+                                    .trim();
+                                return Text(
+                                  name.isNotEmpty
+                                      ? name
+                                      : (user?.email ?? "SafeCity User"),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                );
+                              },
                             ),
                           ],
                         ),
@@ -326,7 +486,12 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: const TextStyle(color: Colors.white60),
                   ),
 
-                  const SizedBox(height: 35),
+                  const SizedBox(height: 22),
+
+                  // Emergency live chat alerts (someone needs help / my SOS)
+                  if (user != null) SosChatBanner(uid: user!.uid),
+
+                  const SizedBox(height: 13),
 
                   const Text(
                     "Quick Actions",
@@ -348,7 +513,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     crossAxisCount: 2,
                     crossAxisSpacing: 18,
                     mainAxisSpacing: 18,
-                    childAspectRatio: 1.05,
+                    childAspectRatio: 0.95, // fits smaller screens (no overflow)
                     children: [
                       dashboardCard(
                         icon: Icons.map,
@@ -356,12 +521,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         subtitle: "Explore your city",
                         color: Colors.blueAccent,
                         onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => const MapScreen(),
-                            ),
-                          );
+                          _goToTab(1);
                         },
                       ),
 
@@ -371,12 +531,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         subtitle: "Report Incident",
                         color: Colors.orange,
                         onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => const ReportScreen(),
-                            ),
-                          );
+                          _goToTab(2);
                         },
                       ),
 
@@ -396,17 +551,42 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
 
                       dashboardCard(
+                        icon: Icons.local_fire_department,
+                        title: "Heatmap",
+                        subtitle: "Risk areas",
+                        color: Colors.deepOrange,
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const HeatmapScreen(),
+                            ),
+                          );
+                        },
+                      ),
+
+                      dashboardCard(
+                        icon: Icons.shield,
+                        title: "Safety Score",
+                        subtitle: "Search any area",
+                        color: Colors.teal,
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const SafetyScoreScreen(),
+                            ),
+                          );
+                        },
+                      ),
+
+                      dashboardCard(
                         icon: Icons.person,
                         title: "Profile",
                         subtitle: "My Account",
                         color: Colors.green,
                         onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => const ProfileScreen(),
-                            ),
-                          );
+                          _goToTab(3);
                         },
                       ),
                     ],
@@ -420,15 +600,43 @@ class _HomeScreenState extends State<HomeScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text(
-                        "Recent Incidents",
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
+                      const Expanded(
+                        child: Text(
+                          "Recent Incidents",
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      // Full community history (filters, search, details)
+                      TextButton(
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                        ),
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const IncidentHistoryScreen(),
+                            ),
+                          );
+                        },
+                        child: const Text(
+                          "View All",
+                          style: TextStyle(
+                            color: Color(0xff66BB6A),
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
                       TextButton(
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                        ),
                         onPressed: () {
                           Navigator.push(
                             context,
@@ -438,7 +646,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           );
                         },
                         child: const Text(
-                          "View All",
+                          "My Reports",
                           style: TextStyle(
                             color: Color(0xff66BB6A),
                             fontWeight: FontWeight.bold,
@@ -458,18 +666,19 @@ class _HomeScreenState extends State<HomeScreen> {
                         borderRadius: BorderRadius.circular(18),
                       ),
                       child: const Text(
-                        "Log in to see your reports here.",
+                        "Log in to see recent incidents.",
                         style: TextStyle(color: Colors.white54),
                         textAlign: TextAlign.center,
                       ),
                     )
                   else
+                    // Latest incidents reported by ALL users (community feed).
+                    // Suspicious (AIVE-flagged) reports are skipped.
                     StreamBuilder<QuerySnapshot>(
                       stream: firestore
                           .collection("reports")
-                          .where("userId", isEqualTo: user!.uid)
                           .orderBy("createdAt", descending: true)
-                          .limit(5)
+                          .limit(20)
                           .snapshots(),
                       builder: (context, snapshot) {
                         if (snapshot.connectionState ==
@@ -500,7 +709,11 @@ class _HomeScreenState extends State<HomeScreen> {
                           );
                         }
 
-                        final docs = snapshot.data?.docs ?? [];
+                        final docs = (snapshot.data?.docs ?? [])
+                            .where((d) => SafetyScoreService.isPublicReport(
+                                d.data() as Map<String, dynamic>))
+                            .take(5)
+                            .toList();
 
                         if (docs.isEmpty) {
                           return Container(
@@ -510,7 +723,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               borderRadius: BorderRadius.circular(18),
                             ),
                             child: const Text(
-                              "No reports yet. Tap Report to submit your first incident.",
+                              "No incidents reported yet. Tap Report to submit one.",
                               style: TextStyle(color: Colors.white54),
                               textAlign: TextAlign.center,
                             ),
@@ -649,7 +862,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
         ],
-      ),
+      )),
 
       // ===============================
       // BOTTOM NAVIGATION BAR
@@ -660,34 +873,7 @@ class _HomeScreenState extends State<HomeScreen> {
         selectedItemColor: const Color(0xff66BB6A),
         unselectedItemColor: Colors.white70,
         type: BottomNavigationBarType.fixed,
-        onTap: (index) {
-          setState(() {
-            currentIndex = index;
-          });
-
-          switch (index) {
-            case 0:
-              break;
-            case 1:
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const MapScreen()),
-              );
-              break;
-            case 2:
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const ReportScreen()),
-              );
-              break;
-            case 3:
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const ProfileScreen()),
-              );
-              break;
-          }
-        },
+        onTap: _goToTab,
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: "Home"),
           BottomNavigationBarItem(icon: Icon(Icons.map), label: "Map"),

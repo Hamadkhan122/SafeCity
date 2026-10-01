@@ -308,8 +308,17 @@ class _LoginScreenState extends State<LoginScreen> {
                           const SizedBox(height: 18),
 
                           // Remember me + Forgot password
-                          Row(
+                          // (Wrap: moves to a 2nd line on narrow phones
+                          // instead of overflowing)
+                          SizedBox(
+                            width: double.infinity,
+                            child: Wrap(
+                            alignment: WrapAlignment.spaceBetween,
+                            crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
+                              Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
                               Transform.scale(
                                 scale: 0.95,
                                 child: Checkbox(
@@ -329,7 +338,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                   fontWeight: FontWeight.w500,
                                 ),
                               ),
-                              const Spacer(),
+                              ],
+                              ),
                               TextButton(
                                 onPressed: _showForgotPasswordDialog,
                                 child: const Text(
@@ -341,6 +351,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                               ),
                             ],
+                          ),
                           ),
 
                           const SizedBox(height: 20),
@@ -454,9 +465,10 @@ class _LoginScreenState extends State<LoginScreen> {
 
                           const SizedBox(height: 25),
 
-                          // Sign up row
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
+                          // Sign up row (wraps on narrow phones)
+                          Wrap(
+                            alignment: WrapAlignment.center,
+                            crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
                               const Text(
                                 "Don't have an account?",
