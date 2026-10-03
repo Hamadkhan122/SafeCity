@@ -57,8 +57,10 @@ class NotificationService {
     required String category,
     required double latitude,
     required double longitude,
+    String? userId, // reporter - is not alerted about their own report
   }) async {
     await _collection.add({
+      "userId": userId,
       "title": title,
       "message": message,
       "category": category,

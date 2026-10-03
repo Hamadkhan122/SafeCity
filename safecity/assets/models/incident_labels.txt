@@ -1,0 +1,7 @@
+accident
+fighting
+fire
+normal
+road_damage
+screen
+person
