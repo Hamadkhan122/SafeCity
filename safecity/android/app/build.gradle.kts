@@ -23,7 +23,7 @@ android {
     defaultConfig {
         applicationId = "com.example.safecity"
 
-        minSdk = 23
+        minSdk = 26 // tflite_flutter needs Android 8.0+
 
         targetSdk = flutter.targetSdkVersion
 
@@ -40,4 +40,13 @@ android {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    // Native Firestore/Auth for IncidentAlertService (alerts when app is closed).
+    // Same libraries the FlutterFire plugins already use.
+    implementation(platform("com.google.firebase:firebase-bom:33.12.0"))
+    implementation("com.google.firebase:firebase-firestore")
+    implementation("com.google.firebase:firebase-auth")
+    implementation("androidx.core:core-ktx:1.13.1")
 }

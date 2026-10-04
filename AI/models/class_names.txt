@@ -1,0 +1,4 @@
+accident
+fighting
+fire
+road_damage

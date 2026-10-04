@@ -3,7 +3,7 @@ import shutil
 import random
 
 SOURCE = r"F:\Accident\Accident\Accident_Detection\Dataset"
-DEST = r"F:\SafeCity_FYP\AI\dataset"
+DEST = r".\dataset"
 
 TRAIN_COUNT = 1000
 VALIDATION_COUNT = 200

@@ -39,8 +39,6 @@ class _NotificationBannerState extends State<NotificationBanner> {
         return Colors.red;
       case "Fire":
         return Colors.orange;
-      case "Theft":
-        return Colors.purpleAccent;
       case "Road Damage":
         return Colors.green;
       case "Fight":

@@ -20,7 +20,6 @@ dependencies:
   firebase_core: ^3.13.0
   firebase_auth: ^5.5.3
   cloud_firestore: ^5.6.7
-  firebase_storage: ^12.4.5
 
   # Google Maps & Polylines
   google_maps_flutter: ^2.12.3
@@ -37,6 +36,10 @@ dependencies:
   # Camera
   image_picker: ^1.1.2
 
+  # On-device AI (AIVE image verification)
+  tflite_flutter: ^0.12.1
+  image: ^4.5.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -51,3 +54,4 @@ flutter:
     - assets/pakistan_map.png
     - assets/icons/
     - assets/map_styles/night_style.json
+    - assets/models/

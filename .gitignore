@@ -1,1 +1,14 @@
-AI/dataset/ 
+# Python / training data (kept outside git)
+.venv/
+AI/dataset/
+AI/data/
+AI/data_extra/
+*.npz
+__pycache__/
+*.pyc
+
+# Flutter build output (also in safecity/.gitignore)
+safecity/build/
+safecity/.dart_tool/
+safecity/android/build/
+safecity/android/.kotlin/
