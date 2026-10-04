@@ -253,11 +253,12 @@ class AiveService {
   // with fists next to a calm friend reached 0.55-0.70 "fighting".
   static const double fightModelMin = 0.80;
   static const double personPassMin = 0.50; // Harassment: people visible
-  // Photo of a screen: rejected from 0.40 (tested on our own phone videos:
-  // 26 of 28 photos of another phone caught, 0 of 80 live camera frames
-  // flagged, about 1.5 % of real incident photos).
+  // Photo of a screen: rejected from 0.50. Model v10 is trained on real
+  // photos of laptop / phone screens from our own test videos (UFC picture
+  // on a laptop, accident picture on a phone): 93-97 % of those frames caught,
+  // 0 live camera frames flagged, about 2 % of real incident photos.
   // From 0.60 it is clear enough to count as a strike.
-  static const double screenRejectMin = 0.40;
+  static const double screenRejectMin = 0.50;
   static const double screenStrikeMin = 0.60;
   static const double otherIncidentMin = 0.80; // clearly another incident
 
