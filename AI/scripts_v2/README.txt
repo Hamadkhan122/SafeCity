@@ -5,7 +5,7 @@ The app itself only uses the three .tflite files in ..\safecity\assets\models\.
 
 MODELS IN THE APP
 -----------------
-1. incident_mobilenetv2.tflite  (source: models\safecity_incident_v10.keras)
+1. incident_mobilenetv2.tflite  (source: models\safecity_incident_v11.keras)
    Input : 224x224 RGB, raw 0..255 (rescaling is inside the model)
    Output: 7 values
      accident, fighting, fire, normal, road_damage, screen  (softmax)
@@ -67,7 +67,7 @@ Step 3 (scripts_v2\, v10 - current app model):
   23   features for the real screen photos from 21 (phones in hand, monitors,
        TVs, laptops)
   16   train head v9 (uses 15, 19, 22 and 23; real screen photos weighted 2.5x)
-  24   real photos OF screens from our own test videos (UFC picture on a laptop,
+  24   real photos OF screens from our own test videos (UFC / news pictures on a laptop,
        accident picture on a phone) + live camera frames
   25   train head v10 = v9 data + 24; UFC / MMA / boxing relabelled "normal"
        (a sports match is not an incident)
