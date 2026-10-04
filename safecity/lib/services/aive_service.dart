@@ -248,13 +248,16 @@ class AiveService {
 
   // Photo check thresholds.
   static const double categoryPassMin = 0.50; // Accident / Fire / Road Damage
-  static const double fightPassMin = 0.50; // fighting / violence probability
+  static const double fightPassMin = 0.50; // fight-pose check (two people)
+  // The incident model alone must be very sure: on our tests a person posing
+  // with fists next to a calm friend reached 0.55-0.70 "fighting".
+  static const double fightModelMin = 0.80;
   static const double personPassMin = 0.50; // Harassment: people visible
-  // Photo of a screen: rejected from 0.45 (tested on our own phone videos:
-  // 24 of 28 photos of another phone caught, 0 of 76 live camera frames
+  // Photo of a screen: rejected from 0.40 (tested on our own phone videos:
+  // 26 of 28 photos of another phone caught, 0 of 80 live camera frames
   // flagged, about 1.5 % of real incident photos).
   // From 0.60 it is clear enough to count as a strike.
-  static const double screenRejectMin = 0.45;
+  static const double screenRejectMin = 0.40;
   static const double screenStrikeMin = 0.60;
   static const double otherIncidentMin = 0.80; // clearly another incident
 
@@ -306,11 +309,14 @@ class AiveService {
     if (category == "Fight") {
       // Fighting must be visible (people + violent action). People alone,
       // hands, or someone standing calmly are not a fight.
-      final fight = raw >= fightPassMin;
+      final model = a.probabilities["fighting"] ?? raw;
+      final pose = a.probabilities["fight pose"] ?? 0.0;
+      final fight = model >= fightModelMin || pose >= fightPassMin;
       final hasPeople = a.personProbability >= personPassMin;
       return PhotoVerdict(
         passed: fight,
-        score: raw,
+        // A rejected fight photo does not show a high confidence.
+        score: fight ? raw : math.min(raw, 0.45).toDouble(),
         flags: fight
             ? const []
             : [

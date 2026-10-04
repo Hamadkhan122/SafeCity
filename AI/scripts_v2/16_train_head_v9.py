@@ -1,5 +1,6 @@
-# Train the 6-class head v8 (current app model):
-#   python scripts_v2/16_train_head_v8.py nordd 1.0 head_v8.keras
+# Train the 6-class head v9 (current app model):
+# SW = weight of the real screen photos (default 2.5: screen photos must be caught).
+#   python scripts_v2/16_train_head_v9.py nordd 1.0 head_v9.keras
 # nordd = leave out the RDD street-view "road_damage" photos (most show a normal-looking road).
 # Uses features from scripts 04-06, 05b, 15, 19, 22 (web fight photos) and 23 (web screen photos).
 import numpy as np, tensorflow as tf, sys, glob
@@ -8,7 +9,7 @@ CL=["accident","fighting","fire","normal","road_damage","screen"]
 DROP_RDD = len(sys.argv)>1 and sys.argv[1]=="nordd"
 W3 = float(sys.argv[2]) if len(sys.argv)>2 else 1.0     # weight of screen close-ups
 USE6 = True
-import os; SW=float(os.environ.get('SW','1.0')); WW=float(os.environ.get('WW','1.0')); NOSMOKE=int(os.environ.get('NOSMOKE','0'))
+import os; SW=float(os.environ.get('SW','2.5')); WW=float(os.environ.get('WW','1.0')); NOSMOKE=int(os.environ.get('NOSMOKE','0'))
 RDDW = float(sys.argv[4]) if len(sys.argv)>4 else 1.0   # weight of RDD street-view road_damage photos
 def load(s):
     parts=[]

@@ -1,11 +1,11 @@
 SafeCity - AI models (training record)
 =======================================
-Run every script from this AI\ folder, e.g.  python scripts_v2\16_train_head_v8.py nordd 1.0 head_v8.keras
+Run every script from this AI\ folder, e.g.  python scripts_v2\16_train_head_v9.py nordd 1.0 head_v9.keras
 The app itself only uses the three .tflite files in ..\safecity\assets\models\.
 
 MODELS IN THE APP
 -----------------
-1. incident_mobilenetv2.tflite  (source: models\safecity_incident_v8.keras)
+1. incident_mobilenetv2.tflite  (source: models\safecity_incident_v9.keras)
    Input : 224x224 RGB, raw 0..255 (rescaling is inside the model)
    Output: 7 values
      accident, fighting, fire, normal, road_damage, screen  (softmax)
@@ -16,7 +16,10 @@ MODELS IN THE APP
 3. pose_yolov8n.tflite  (YOLOv8n-pose, Ultralytics, free / AGPL-3.0; script 17)
    Finds people and 17 body keypoints. Used for Fight: two people close together
    in a punching / pushing / fighting-guard pose (lib\services\pose_fight_detector.dart).
-   Fight photo confidence = max(incident "fighting", fight pose).
+   Fight passes when the fight-pose check finds two people really fighting
+   (punch/push contact, kick, or BOTH in a fighting guard, nobody sitting)
+   OR the incident model alone is very sure (fighting >= 0.80).
+   One person posing with fists next to a calm / sitting friend is rejected.
    (The harassment model is no longer used for Fight: it called 13% of hug /
    handshake photos violent.)
 
@@ -38,7 +41,7 @@ Step 2 (scripts_v2\): backbone of step 1 kept frozen; new output layers trained.
   07   train the 6-class head (v3)
   08   train the "person" head (people visible yes/no)
   09   build the v3 model, 10 convert to TFLite, 11 simulate the AIVE photo decision
-Step 3 (scripts_v2\, v8 - current app model):
+Step 3 (scripts_v2\, v9 - current app model):
   12   "screen" class part 3: close-up photos where a phone / monitor screen fills
        the frame (pixel grid, colour cast, glare, bezel, fingers)
   13   normal roads with tree shadows (shadows were mistaken for cracks)
@@ -58,12 +61,12 @@ Step 3 (scripts_v2\, v8 - current app model):
        features, split by search query / video
   23   features for the real screen photos from 21 (phones in hand, monitors,
        TVs, laptops)
-  16   train head v8 (uses 15, 19, 22 and 23). The RDD street-view "road_damage" photos are left out: most
+  16   train head v9 (uses 15, 19, 22 and 23; real screen photos weighted 2.5x). The RDD street-view "road_damage" photos are left out: most
        of them show a normal-looking road (the damage is too small to see), so
        the old model accepted ANY road photo (our own normal campus road was
        verified as road damage). Now the damage must be visible.
   17   YOLOv8n-pose export + fight-pose rule (same rule as the Dart code)
-  18   build models\safecity_incident_v8.keras and convert to TFLite float16
+  18   build models\safecity_incident_v9.keras and convert to TFLite float16
 Note: models\class_names.txt belongs to the step-1 model (4 classes). The app
 model's labels (7) are in ..\safecity\assets\models\incident_labels.txt.
 Data: scripts expect the dataset in .\data\<split>\<class>\ and .\data_extra\
@@ -76,28 +79,29 @@ training images). Before, it used plain linear sampling, which on a 12 MP photo
 reads only 1 of every ~18 pixels -> noisy, aliased input the models never saw.
 On our own phone video frames this alone raised screen detection from 43% to 61%.
 
-RESULTS (v8)
+RESULTS (v9)
 ------------
 AIVE photo decision (photo must pass; same thresholds as the app):
-  real photos accepted: accident 88.5%, fire 94.5%, fighting (CCTV) 97.3%,
-                        road damage (cracks/potholes, visible) 99%
-  unseen web fight photos/videos: ~93% accepted
-  posed / phone-style fight photos: 7 of 8 accepted
-  unseen Fire-Smoke test photos: fire 98%, smoke 87% accepted as Fire
-  wrong photos accepted: normal->Accident 1.4%, normal->Fire 0.7%,
-                        normal->Road damage 0%, street people->Fight 2.7%,
-                        synthetic screens->Accident 0.9%
-  Our own phone video: 24 of 28 frames showing a picture on another phone are
-  flagged as a screen (the other 4 are still rejected: no accident visible);
-  0 of 76 live camera frames flagged; man standing calmly -> Fight: 0 of 56;
-  normal campus road -> Road damage: 0 of 20.
-  Real incident photos wrongly flagged as a screen: about 1.5%.
-Screen check: reject from 0.45, strike from 0.60.
+  real photos accepted: accident 88%, fire ~94%, road damage (visible) 99%
+  Fight: posed/staged fight photos 7 of 8, unseen web fight photos 82%,
+         CCTV fights 90%
+  Fake fights rejected: our test video (one person posing with fists next to
+         a friend typing on a laptop) 4 of 4 rejected (before: 3 of 4 accepted);
+         hugs/handshakes/people together -> Fight 5% (before 15%);
+         street people 1%; man standing calmly 0%
+  Photos of another phone / screen: 26 of 28 frames of our video caught,
+         the other 2 still rejected (no accident visible); 0 of 80 live camera
+         frames flagged; real incident photos wrongly flagged about 1.5%
+Screen check: reject from 0.40, strike from 0.60.
+
+SAFETY SCORE WEIGHTS (lowered on team request, see ..\SCORING_RULES.md):
+  Fire 25 · Accident 20 · Fight 15 · Harassment 12 · Road Damage 6
 
 KNOWN LIMITS
 ------------
-- A still photo cannot always tell a hug or dance from a fight (two people close
-  with arms up). The description check and the score threshold still apply.
+- A still photo cannot always tell a hug or dance from a fight. The rules are
+  now strict, so a real fight must show contact (punch / push) or both people
+  fighting; a fight photographed from far away (small people) may be rejected.
 - A very close photo of another phone, where the phone edge/hand is not visible,
   can still miss the screen check; it is then usually rejected because the
   incident itself is not recognised.

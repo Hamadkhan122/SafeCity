@@ -8,8 +8,8 @@
 // Score = SafetyScoreService.scoreAt(chosen radius) - the same algorithm the
 // heatmap zones and the safe route use (see safety_score_service.dart):
 //   start at 100, each incident takes away:
-//   category points (Fire 35, Accident 30, Fight 25, Harassment 20,
-//   Road Damage 10) x time (today 100 %, 2-7 d 70 %, 8-30 d 40 %,
+//   category points (Fire 25, Accident 20, Fight 15, Harassment 12,
+//   Road Damage 6) x time (today 100 %, 2-7 d 70 %, 8-30 d 40 %,
 //   31-90 d 20 %) x distance (inner / middle / outer third of the radius:
 //   100 / 60 / 30 %) x trust (Verified 1.0, Rejected 0)
 //   duplicates of one incident (< 150 m, < 6 h) count once
@@ -797,7 +797,7 @@ class _SafetyScoreScreenState extends State<SafetyScoreScreen> {
               style: TextStyle(color: Colors.white70),
             ),
             const SizedBox(height: 8),
-            row("Category", "Fire −35 · Accident −30 · Fight −25 · Harassment −20 · Road Damage −10"),
+            row("Category", "Fire −25 · Accident −20 · Fight −15 · Harassment −12 · Road Damage −6"),
             row("Time", "Today 100% · 2–7 days 70% · 8–30 days 40% · 31–90 days 20% · older 0%"),
             row("Distance",
                 "Inner ⅓ of $_radiusLabel 100% · middle ⅓ 60% · outer ⅓ 30%"),
@@ -807,7 +807,7 @@ class _SafetyScoreScreenState extends State<SafetyScoreScreen> {
             const Text(
               "Score = 100 − points lost\n"
               "70 – 100 Safe  ·  40 – 69 Moderate  ·  0 – 39 Unsafe\n"
-              "Example: a fire reported here today → 100 − 35 = 65 (Moderate)",
+              "Example: a fire reported here today → 100 − 25 = 75 (Safe)",
               style: TextStyle(color: Colors.white),
             ),
           ],

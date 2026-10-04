@@ -56,7 +56,10 @@ def person(box,kp,ar):
     for a_,k_,o_ in ((15,11,16),(16,12,15)):
         A,Hh,O=P_(kp,a_,ar),P_(kp,k_,ar),P_(kp,o_,ar)
         if A and Hh and O and A[1]<Hh[1]+1.0*torso and A[1]<O[1]-0.8*torso: kick=1
-    return dict(box=(x1,y1,x2,y2),h=h,cx=(x1+x2)/2,cy=(y1+y2)/2,torso=torso,raise_=raise_,guard=guard,kick=kick,wrists=wrists)
+    seated=False
+    kn=[p for p in (P_(kp,13,ar),P_(kp,14,ar)) if p]
+    if hp and kn and np.mean([p[1] for p in kn])-np.mean([p[1] for p in hp])<0.5*torso: seated=True
+    return dict(box=(x1,y1,x2,y2),h=h,cx=(x1+x2)/2,cy=(y1+y2)/2,torso=torso,raise_=raise_,guard=guard,kick=kick,wrists=wrists,seated=seated)
 def strike(p,q):
     x1,y1,x2,y2=q['box']; m=0.05*q['h']; chest=y1+0.55*(y2-y1)
     for W,S in p['wrists']:
@@ -77,10 +80,9 @@ def rule(boxes,conf,kps,ar,minc=0.5,big=0.2,dmax=1.3):
             if d>dmax: continue
             s=0.0
             if strike(pa,pb) or strike(pb,pa): s=max(s,0.8)
-            if pa['kick'] or pb['kick']: s=max(s,0.8)
-            if pa['raise_'] or pb['raise_']: s=max(s,0.65)
-            if pa['guard'] and pb['guard']: s=max(s,0.75)
-            elif (pa['guard'] or pb['guard']) and d<0.9: s=max(s,0.6)
+            if (pa['kick'] and not pa['seated']) or (pb['kick'] and not pb['seated']): s=max(s,0.8)
+            # both people in a fighting guard, at least one with both fists up, nobody sitting
+            if pa['guard'] and pb['guard'] and max(pa['guard'],pb['guard'])==2 and not pa['seated'] and not pb['seated']: s=max(s,0.7)
             best=max(best,s)
     return best
 

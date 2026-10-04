@@ -6,11 +6,13 @@
 // YOLOv8n-pose (assets/models/pose_yolov8n.tflite, free, runs on the phone)
 // and checks the pose of two people standing close together:
 //   * arm reaching into the other person at head / chest height (punch, push)
-//   * fists raised above the shoulder
-//   * both people in a fighting guard (fists up, elbows down)
+//   * a kick by a standing person
+//   * BOTH people in a fighting guard (fists up, elbows down), nobody sitting
+// One person posing with raised fists next to a calm / sitting person is NOT
+// a fight.
 // Returns a score 0..1 (0 = no fight pose). Same rules as
-// AI/scripts_v2/17_pose_fight_rule.py (tested: 8/9 posed fight photos pass,
-// about 1-2 % of normal photos of people).
+// AI/scripts_v2/17_pose_fight_rule.py (tested: 7/8 posed fight photos pass,
+// our fake 'one person posing' photos rejected).
 //
 // Model input : [1, 3, 320, 320] float32 RGB 0..1 (channels first),
 //               photo letterboxed (grey 114 padding)
@@ -38,7 +40,7 @@ class _Person {
 
 class _Pose {
   late double x1, y1, x2, y2, h, cx, cy, torso;
-  bool raised = false, kick = false;
+  bool raised = false, kick = false, seated = false;
   int guard = 0;
   final List<List<double>?> wristShoulder = []; // [wx, wy, sx, sy] (s may be missing)
 }
@@ -159,6 +161,11 @@ class PoseFightDetector {
         q.kick = true;
       }
     }
+    // Sitting: knees at about hip height (cross-legged, on a chair).
+    final kn = [_pt(p.kp, 13, ar), _pt(p.kp, 14, ar)].whereType<List<double>>().toList();
+    if (hp.isNotEmpty && kn.isNotEmpty && mean(kn) - mean(hp) < 0.5 * q.torso) {
+      q.seated = true;
+    }
     return q;
   }
 
@@ -193,13 +200,17 @@ class PoseFightDetector {
         final d = math.sqrt(math.pow(pa.cx - pb.cx, 2) + math.pow(pa.cy - pb.cy, 2)) / mh;
         if (d > 1.3) continue;
         var s = 0.0;
+        // Arm reaching into the other person (punch / push).
         if (_strike(pa, pb) || _strike(pb, pa)) s = math.max(s, 0.8);
-        if (pa.kick || pb.kick) s = math.max(s, 0.8);
-        if (pa.raised || pb.raised) s = math.max(s, 0.65);
-        if (pa.guard > 0 && pb.guard > 0) {
-          s = math.max(s, 0.75);
-        } else if ((pa.guard > 0 || pb.guard > 0) && d < 0.9) {
-          s = math.max(s, 0.6);
+        // Kick by a standing person.
+        if ((pa.kick && !pa.seated) || (pb.kick && !pb.seated)) s = math.max(s, 0.8);
+        // BOTH people in a fighting guard (one with both fists up), nobody
+        // sitting. One person posing with fists next to a calm person is
+        // not a fight.
+        if (pa.guard > 0 && pb.guard > 0 &&
+            math.max(pa.guard, pb.guard) == 2 &&
+            !pa.seated && !pb.seated) {
+          s = math.max(s, 0.7);
         }
         best = math.max(best, s);
       }

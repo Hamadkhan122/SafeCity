@@ -79,11 +79,11 @@ SafetyScore  = round(100 − Σ deduction_i), never below 0
 
 | W (category) | | T (age of first report) | | D (distance) | |
 |---|---|---|---|---|---|
-| Fire | 35 | ≤ 1 day | 1.0 | d ≤ R/3 | 1.0 |
-| Accident | 30 | ≤ 7 days | 0.7 | d ≤ 2R/3 | 0.6 |
-| Fight | 25 | ≤ 30 days | 0.4 | d ≤ R | 0.3 |
-| Harassment | 20 | ≤ 90 days | 0.2 | d > R | 0 |
-| Road Damage | 10 | > 90 days | 0 | | |
+| Fire | 25 | ≤ 1 day | 1.0 | d ≤ R/3 | 1.0 |
+| Accident | 20 | ≤ 7 days | 0.7 | d ≤ 2R/3 | 0.6 |
+| Fight | 15 | ≤ 30 days | 0.4 | d ≤ R | 0.3 |
+| Harassment | 12 | ≤ 90 days | 0.2 | d > R | 0 |
+| Road Damage | 6 | > 90 days | 0 | | |
 
 **Levels:** 70–100 Safe · 40–69 Moderate · 0–39 Unsafe
 
@@ -106,13 +106,13 @@ Same numerical Safety Score, different labels:
 
 | # | Case | Calculation | Result |
 |---|---|---|---|
-| 1 | One verified fire today | 100 − 35×1.0×1.0 | **65 Moderate** |
-| 2 | Two different accidents today (500 m apart) | 100 − 30 − 30 | **40 Moderate** |
-| 3 | Same accident, 2 users (50 m, 10 min apart) | 100 − 30×1.25 = 62.5 | **63 Moderate** |
-| 3b | Same accident, 4 users | 100 − 30×1.50 | **55 Moderate** |
-| 4 | One road damage today | 100 − 10 | **90 Safe** |
-| 5 | Fire older than 90 days | 100 − 35×0 | **100 Safe** |
-| 6 | Fire 5 days ago, 1.5 km away | 100 − 35×0.7×0.6 = 85.3 | **85 Safe** (Heatmap: Medium) |
+| 1 | One verified fire today | 100 − 25×1.0×1.0 | **75 Safe** |
+| 2 | Two different accidents today (500 m apart) | 100 − 20 − 20 | **60 Moderate** |
+| 3 | Same accident, 2 users (50 m, 10 min apart) | 100 − 20×1.25 | **75 Safe** |
+| 3b | Same accident, 4 users | 100 − 20×1.50 | **70 Safe** |
+| 4 | One road damage today | 100 − 6 | **94 Safe** |
+| 5 | Fire older than 90 days | 100 − 25×0 | **100 Safe** |
+| 6 | Fire 5 days ago, 1.5 km away | 100 − 25×0.7×0.6 = 89.5 | **90 Safe** (Heatmap: Low) |
 
 Run them: `flutter test test/scoring_test.dart`
 
