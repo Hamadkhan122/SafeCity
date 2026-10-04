@@ -205,7 +205,7 @@ class _AiTestLabScreenState extends State<AiTestLabScreen> {
                   const SizedBox(height: 6),
                   const Text(
                     "person = people visible (yes/no). screen = "
-                    "photo taken of a laptop/phone screen. fight pose = two "
+                    "photo taken of a laptop/phone screen (screen texture = pixel grid / moire check). fight pose = two "
                     "people in a fighting pose (Fight only). normal = no incident.",
                     style: TextStyle(color: Colors.white54, fontSize: 11),
                   ),

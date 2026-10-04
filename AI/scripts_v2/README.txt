@@ -20,6 +20,11 @@ MODELS IN THE APP
    (punch/push contact, kick, or BOTH in a fighting guard, nobody sitting)
    OR the incident model alone is very sure (fighting >= 0.80).
    One person posing with fists next to a calm / sitting friend is rejected.
+4. screen_texture.tflite  (small CNN, scripts 27-28)
+   Looks at 8 patches of 128x128 px of the ORIGINAL full-resolution photo for the
+   pixel grid / moire of a screen - independent of what picture the screen shows.
+   Mean of the 3 highest patches >= 0.90 -> rejected as "may show a screen"
+   (no strike). About 1.4% of held-out real photos reach 0.90.
    (The harassment model is no longer used for Fight: it called 13% of hug /
    handshake photos violent.)
 
@@ -65,7 +70,11 @@ Step 3 (scripts_v2\, v10 - current app model):
   24   real photos OF screens from our own test videos (UFC picture on a laptop,
        accident picture on a phone) + live camera frames
   25   train head v10 = v9 data + 24; UFC / MMA / boxing relabelled "normal"
-       (a sports match is not an incident) The RDD street-view "road_damage" photos are left out: most
+       (a sports match is not an incident)
+  26   (run on the laptop) more web fight / no-fight photos and videos. Tested:
+       the extra data did NOT improve the unseen-data results (the web labels are
+       too noisy), so the app keeps head v10.
+  27-28 screen-texture model (see model 4) The RDD street-view "road_damage" photos are left out: most
        of them show a normal-looking road (the damage is too small to see), so
        the old model accepted ANY road photo (our own normal campus road was
        verified as road damage). Now the damage must be visible.
@@ -95,7 +104,9 @@ AIVE photo decision (photo must pass; same thresholds as the app):
          0 live camera frames flagged; real incident photos flagged about 2%;
          everyday indoor scenes with a monitor/TV visible about 12%
   IMPORTANT: when we trained on one test video and tested on the other, only
-  5-80% of the unseen video was caught. The screen check is learned from the
+  5-80% of the unseen video was caught. The screen-texture model (4) was added
+  for unseen screens; its real-world catch rate still has to be measured with
+  real phone photos of screens. The screen check is learned from the
   picture and can miss a NEW kind of screen photo. More real screen photos
   (taken with a phone camera) make it stronger.
 Screen check: reject from 0.50, strike from 0.60.
