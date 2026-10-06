@@ -39,6 +39,13 @@
 //    screen_device_detector.dart): is a laptop / TV / phone / keyboard
 //    visible in the photo?
 //
+// 6. Fight-pair model - fight_pair.tflite (MobileNetV2 + 1 output, 4.5 MB)
+//    When the pose rule finds two people in contact, the part of the photo
+//    with those two people (upper body) is checked: friendly contact
+//    (handshake, hug, high five, dancing) or a real fight? Trained on photos
+//    of handshakes / hugs / high fives / dancing vs fights
+//    (AI/scripts_v2/30_fight_pair_classifier.py).
+//
 // SCREEN DECISION (evidence based). The picture model's "screen" score alone
 // was too sensitive on hazy / misty real photos (live fight photos were
 // rejected), so a photo counts as a screen photo only when:
@@ -90,6 +97,18 @@ class TfliteImageClassifier implements ImageClassifier {
     "Road Damage": "road_damage",
     "Fight": "fighting",
   };
+
+  static const _fightPairAsset = "assets/models/fight_pair.tflite";
+  static Interpreter? _fightPairInterpreter;
+
+  /// Fight-pair score 0..1 for the two people in [box] (photo-relative).
+  static Future<double> _fightPair(img.Image photo, List<double> box) async {
+    final it = _fightPairInterpreter ??= await Interpreter.fromAsset(_fightPairAsset);
+    final input = _pairCrop(photo, box);
+    final out = [List<double>.filled(1, 0.0)];
+    it.run(input.buffer, out);
+    return out[0][0].clamp(0.0, 1.0).toDouble();
+  }
 
   static const _textureAsset = "assets/models/screen_texture.tflite";
   static const double textureMin = 0.90; // ~1.4 % of real photos reach this
@@ -208,6 +227,7 @@ class TfliteImageClassifier implements ImageClassifier {
 
     double? raw;
     double? poseScore;
+    double? pairScore;
     Map<String, double> h = const {};
     if (category == "Harassment") {
       h = await _run(_harassment, input);
@@ -216,14 +236,25 @@ class TfliteImageClassifier implements ImageClassifier {
       // Fight = incident model "fighting" or the fight-pose check.
       // (The harassment model is not used here: on our tests it also called
       // hugs and handshakes violent, 13% of such photos.)
-      raw = cat("fighting");
+      raw = probs["fighting"] ?? 0.0;
       if (prep.pose != null) {
         try {
           final p = await PoseFightDetector.analyze(prep.pose!);
           poseScore = p.score;
-          raw = math.max(raw, p.score);
+          if (p.score >= AiveService.fightPassMin && p.pair != null) {
+            try {
+              pairScore = await _fightPair(prep.small, p.pair!);
+            } catch (e) {
+              pairScore = null; // model unavailable -> pose rule only
+            }
+          }
+          // Contact pose counts only when the fight-pair model agrees that it
+          // is a fight and not a handshake / hug.
+          final poseFight = p.score >= AiveService.fightPassMin &&
+              (pairScore == null || pairScore >= AiveService.fightPairMin);
+          raw = math.max(raw, poseFight ? math.max(p.score, pairScore ?? 0.0) : 0.0);
         } catch (e) {
-          // pose model unavailable -> keep the other two models' result
+          // pose model unavailable -> keep the incident model's result
         }
       }
     } else if (_incidentLabelFor.containsKey(category)) {
@@ -244,6 +275,7 @@ class TfliteImageClassifier implements ImageClassifier {
         if (h.containsKey("harassment"))
           "violence (harassment model)": h["harassment"]!,
         if (poseScore != null) "fight pose": poseScore,
+        if (pairScore != null) "fight pair": pairScore,
         "screen texture": texture,
         "screen device${device != null ? " ($device)" : ""}": deviceScore,
       },
@@ -254,7 +286,7 @@ class TfliteImageClassifier implements ImageClassifier {
 /// Photo -> [1, size, size, 3] float32 RGB 0..255 (whole photo resized to
 /// size x size with area averaging, like the training images) and the
 /// letterboxed 320 x 320 input of the pose model / device detector.
-({Float32List input, PoseInput? pose, List<Float32List> patches})? _preprocess(
+({Float32List input, PoseInput? pose, List<Float32List> patches, img.Image small})? _preprocess(
     Uint8List bytes, int size, bool withPose) {
   final decoded = img.decodeImage(bytes);
   if (decoded == null) return null;
@@ -294,7 +326,39 @@ class TfliteImageClassifier implements ImageClassifier {
     input: input,
     pose: withPose ? PoseFightDetector.prepare(upright) : null,
     patches: patches,
+    small: upright,
   );
+}
+
+/// Crop of the two people found by the pose rule, like the training crops of
+/// the fight-pair model: their joint box, upper 65 % (heads, arms, upper
+/// bodies), 8 % margin, resized to 224 x 224, raw RGB 0..255.
+Float32List _pairCrop(img.Image photo, List<double> box) {
+  final w = photo.width.toDouble(), h = photo.height.toDouble();
+  var x1 = box[0] * w, y1 = box[1] * h, x2 = box[2] * w, y2 = box[3] * h;
+  y2 = y1 + 0.65 * (y2 - y1);
+  final px = 0.08 * (x2 - x1), py = 0.08 * (y2 - y1);
+  x1 = math.max(0.0, x1 - px);
+  y1 = math.max(0.0, y1 - py);
+  x2 = math.min(w, x2 + px);
+  y2 = math.min(h, y2 + py);
+  final int cx = math.min(x1.round(), photo.width - 1);
+  final int cy = math.min(y1.round(), photo.height - 1);
+  final int cw = math.max(1, math.min((x2 - x1).round(), photo.width - cx));
+  final int ch = math.max(1, math.min((y2 - y1).round(), photo.height - cy));
+  final crop = img.copyCrop(photo, x: cx, y: cy, width: cw, height: ch);
+  final r = img.copyResize(crop, width: 224, height: 224, interpolation: img.Interpolation.average);
+  final out = Float32List(224 * 224 * 3);
+  var i = 0;
+  for (var y = 0; y < 224; y++) {
+    for (var x = 0; x < 224; x++) {
+      final p = r.getPixel(x, y);
+      out[i++] = (p.rNormalized * 255.0).toDouble();
+      out[i++] = (p.gNormalized * 255.0).toDouble();
+      out[i++] = (p.bNormalized * 255.0).toDouble();
+    }
+  }
+  return out;
 }
 
 /// 8 patches of 128 x 128 pixels from the middle 70 % of the ORIGINAL photo

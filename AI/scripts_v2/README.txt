@@ -125,6 +125,14 @@ screen >= 0.30, OR the screen-texture model >= 0.90 with screen >= 0.30.
 Misty park fight photos: 66 % -> 0 % rejected. Photos of screens caught:
 58-90 % (before 95-100 %, but with false rejections of real photos).
 
+FIGHT-PAIR MODEL (30_fight_pair_classifier.py)
+----------------------------------------------
+Handshakes, hugs and high fives were accepted as Fight by the pose rule. Now
+the upper-body crop of the two people is checked by fight_pair.tflite:
+Fight = model "fighting" >= 0.80 OR (pose rule >= 0.5 AND fight-pair >= 0.70).
+Held-out tests: handshake 16 % -> 3 %, high five 87 % -> 7 %, hug 10 % -> 2 %;
+our staged park fight 83 % accepted.
+
 KNOWN LIMITS
 ------------
 - A still photo cannot always tell a hug or dance from a fight. The rules are

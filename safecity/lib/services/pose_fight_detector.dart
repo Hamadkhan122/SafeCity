@@ -74,13 +74,22 @@ class PoseFightDetector {
     return PoseInput(data, ox, oy, w, h, photo.width / photo.height);
   }
 
-  /// Fight-pose score 0..1 and the number of people found.
-  static Future<({double score, int people})> analyze(PoseInput input) async {
+  /// Fight-pose score 0..1, the number of people found and the box of the
+  /// two people that gave the score (x1, y1, x2, y2 relative to the photo,
+  /// null when no pair was found). The box is checked by the fight-pair
+  /// model (friendly contact such as a handshake vs a real fight).
+  static Future<({double score, int people, List<double>? pair})> analyze(
+      PoseInput input) async {
     final it = _interpreter ??= await Interpreter.fromAsset(asset);
     final out = List.generate(1, (_) => List.generate(56, (_) => List<double>.filled(2100, 0.0)));
     it.run(input.data.buffer, out);
     final people = _decode(out[0], input);
-    return (score: _rule(people, input.aspect), people: people.where((p) => p.score >= 0.5).length);
+    final r = _rule(people, input.aspect);
+    return (
+      score: r.score,
+      people: people.where((p) => p.score >= 0.5).length,
+      pair: r.pair,
+    );
   }
 
   static List<_Person> _decode(List<List<double>> y, PoseInput inp) {
@@ -184,7 +193,7 @@ class PoseFightDetector {
     return false;
   }
 
-  static double _rule(List<_Person> people, double ar) {
+  static ({double score, List<double>? pair}) _rule(List<_Person> people, double ar) {
     final ps = people
         .where((p) => p.score >= 0.5)
         .take(6)
@@ -192,6 +201,8 @@ class PoseFightDetector {
         .where((q) => q.h >= 0.2)
         .toList();
     var best = 0.0;
+    var bestD = double.infinity;
+    List<double>? pair;
     for (var a = 0; a < ps.length; a++) {
       for (var b = a + 1; b < ps.length; b++) {
         final pa = ps[a], pb = ps[b];
@@ -212,9 +223,18 @@ class PoseFightDetector {
             !pa.seated && !pb.seated) {
           s = math.max(s, 0.7);
         }
-        best = math.max(best, s);
+        if (s > best || (s == best && s > 0 && d < bestD)) {
+          best = s;
+          bestD = d;
+          pair = [
+            math.min(pa.x1, pb.x1) / ar,
+            math.min(pa.y1, pb.y1),
+            math.max(pa.x2, pb.x2) / ar,
+            math.max(pa.y2, pb.y2),
+          ];
+        }
       }
     }
-    return best;
+    return (score: best, pair: pair);
   }
 }

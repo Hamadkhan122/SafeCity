@@ -257,6 +257,11 @@ class AiveService {
   // The incident model alone must be very sure: on our tests a person posing
   // with fists next to a calm friend reached 0.55-0.70 "fighting".
   static const double fightModelMin = 0.80;
+  // A contact pose (punch / push) only counts as a fight when the fight-pair
+  // model says the two people are fighting, not shaking hands / hugging.
+  // Tested: handshakes 16 % -> 3 %, high fives 87 % -> 7 %, hugs 10 % -> 2 %;
+  // our staged park fight photos 73 % accepted.
+  static const double fightPairMin = 0.70;
   static const double personPassMin = 0.50; // Harassment: people visible
   // Photo of a screen: rejected from 0.50, strike from 0.60. The screen score
   // is evidence based (TfliteImageClassifier): picture model >= 0.90, or a
@@ -320,7 +325,9 @@ class AiveService {
       // hands, or someone standing calmly are not a fight.
       final model = a.probabilities["fighting"] ?? raw;
       final pose = a.probabilities["fight pose"] ?? 0.0;
-      final fight = model >= fightModelMin || pose >= fightPassMin;
+      final pair = a.probabilities["fight pair"];
+      final fight = model >= fightModelMin ||
+          (pose >= fightPassMin && (pair == null || pair >= fightPairMin));
       final hasPeople = a.personProbability >= personPassMin;
       return PhotoVerdict(
         passed: fight,
