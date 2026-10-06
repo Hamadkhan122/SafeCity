@@ -31,21 +31,21 @@ int score(List<IncidentModel> list, {double radius = 3000}) =>
         .score;
 
 void main() {
-  test("1. one verified fire today -> 75 Safe", () {
+  test("1. one verified fire today -> 97 Safe", () {
     final r = SafetyScoreService.scoreAt(
         lat: lat, lng: lng, incidents: [report("Fire")], radiusMeters: 3000, now: now);
-    expect(r.score, 75);
+    expect(r.score, 97);
     expect(r.label, "Safe");
   });
 
-  test("2. two different accidents (500 m apart) -> 60", () {
+  test("2. two different accidents (500 m apart) -> 94", () {
     // 0.0045 deg ~ 500 m: different incidents, both inside R/3 (1 km)
     expect(
         score([report("Accident", id: "a"), report("Accident", id: "b", dLat: 0.0045)]),
-        60);
+        94);
   });
 
-  test("3. same accident reported by 2 users -> 75", () {
+  test("3. same accident reported by 2 users -> 96", () {
     // 50 m apart, 10 minutes apart -> same incident, x1.25
     expect(
         score([
@@ -53,19 +53,19 @@ void main() {
           report("Accident", id: "b", dLat: 0.00045,
               age: const Duration(minutes: -10)),
         ]),
-        75);
+        96); // 100 - 3 x 1.25 = 96.25 -> 96
   });
 
-  test("3b. same accident reported by 4 users -> capped at x1.5 -> 70", () {
+  test("3b. same accident reported by 4 users -> capped at x1.5 -> 96", () {
     expect(
         score([
           for (int i = 0; i < 4; i++) report("Accident", id: "a$i"),
         ]),
-        70);
+        96); // 100 - 3 x 1.5 = 95.5 -> 96
   });
 
-  test("4. one road damage -> 94 Safe", () {
-    expect(score([report("Road Damage")]), 94);
+  test("4. one road damage -> 98 Safe", () {
+    expect(score([report("Road Damage")]), 98);
   });
 
   test("5. fire older than 90 days -> 100", () {
@@ -76,9 +76,9 @@ void main() {
     expect(score([report("Fire", status: "Suspicious")]), 100);
   });
 
-  test("7. fire 5 days ago in the middle third (1.5 km) -> 100 - 25x0.7x0.6", () {
+  test("7. fire 5 days ago in the middle third (1.5 km) -> 100 - 3x0.7x0.6", () {
     // 0.0135 deg ~ 1.5 km
     expect(score([report("Fire", dLat: 0.0135, age: const Duration(days: 5))]),
-        90); // 100 - 10.5 = 89.5 -> 90
+        99); // 100 - 1.26 = 98.74 -> 99
   });
 }

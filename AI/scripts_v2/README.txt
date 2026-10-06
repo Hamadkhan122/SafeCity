@@ -112,7 +112,18 @@ AIVE photo decision (photo must pass; same thresholds as the app):
 Screen check: reject from 0.50, strike from 0.60.
 
 SAFETY SCORE WEIGHTS (lowered on team request, see ..\SCORING_RULES.md):
-  Fire 25 · Accident 20 · Fight 15 · Harassment 12 · Road Damage 6
+  Fire 3 · Accident 3 · Fight 2 · Harassment 2 · Road Damage 2
+  (small points: a few incidents in one place no longer push the score to 0)
+
+SCREEN DECISION v12 (29_screen_device_detector.py)
+--------------------------------------------------
+Live photos of a real fight on a misty day were rejected as screen photos:
+haze / low contrast raises the picture model's "screen" score. Now a photo is
+a screen photo only with evidence: picture model >= 0.90, OR a laptop / TV /
+phone / keyboard visible (YOLOv8n detector, device_yolov8n.tflite) with
+screen >= 0.30, OR the screen-texture model >= 0.90 with screen >= 0.30.
+Misty park fight photos: 66 % -> 0 % rejected. Photos of screens caught:
+58-90 % (before 95-100 %, but with false rejections of real photos).
 
 KNOWN LIMITS
 ------------

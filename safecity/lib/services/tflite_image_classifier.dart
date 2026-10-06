@@ -35,6 +35,19 @@
 //    very confident score (>= textureMin) counts as "screen" (rejected as
 //    "may show a screen", no strike).
 //
+// 5. Screen device detector - device_yolov8n.tflite (see
+//    screen_device_detector.dart): is a laptop / TV / phone / keyboard
+//    visible in the photo?
+//
+// SCREEN DECISION (evidence based). The picture model's "screen" score alone
+// was too sensitive on hazy / misty real photos (live fight photos were
+// rejected), so a photo counts as a screen photo only when:
+//   a) the picture model is very sure (screen >= 0.90), or
+//   b) a laptop / TV / phone / keyboard is visible AND screen >= 0.30, or
+//   c) the texture model finds a pixel grid / moire AND screen >= 0.30.
+// Otherwise the screen score is capped below the reject limit and the
+// category score is measured without the "screen" share.
+//
 // Resizing uses area averaging (like the training pipeline). Plain linear
 // sampling of a 12 MP camera photo down to 224 px skips most pixels and
 // produces noisy, aliased input the models were never trained on.
@@ -50,6 +63,7 @@ import 'package:tflite_flutter/tflite_flutter.dart';
 
 import 'aive_service.dart';
 import 'pose_fight_detector.dart';
+import 'screen_device_detector.dart';
 
 class _Model {
   final String modelAsset;
@@ -79,6 +93,10 @@ class TfliteImageClassifier implements ImageClassifier {
 
   static const _textureAsset = "assets/models/screen_texture.tflite";
   static const double textureMin = 0.90; // ~1.4 % of real photos reach this
+
+  // Screen decision limits (see SCREEN DECISION above).
+  static const double screenSureMin = 0.90; // picture model alone
+  static const double screenWithEvidenceMin = 0.30; // with device / texture
   static Interpreter? _textureInterpreter;
 
   static Future<double> _textureScore(List<Float32List> patches) async {
@@ -122,8 +140,9 @@ class TfliteImageClassifier implements ImageClassifier {
   Future<ImageAnalysis?> analyze(String category, File image) async {
     // Decode + resize in a background isolate so the UI does not freeze.
     final bytes = await image.readAsBytes();
-    final withPose = category == "Fight";
-    final prep = await Isolate.run(() => _preprocess(bytes, 224, withPose));
+    // The letterboxed 320 x 320 input is needed for every photo (device
+    // detector) and for Fight (pose model).
+    final prep = await Isolate.run(() => _preprocess(bytes, 224, true));
     if (prep == null) return null; // unreadable photo
     final input = prep.input;
 
@@ -146,12 +165,45 @@ class TfliteImageClassifier implements ImageClassifier {
         texture = 0; // texture model unavailable -> picture model only
       }
     }
-    // A texture hit rejects the photo ("may show a screen") but never gives a
-    // strike on its own: 0.55 is above AiveService.screenRejectMin (0.50) and
-    // below screenStrikeMin (0.60).
-    final screenP = math
-        .max(probs["screen"] ?? 0.0, texture >= textureMin ? 0.55 : 0.0)
-        .toDouble();
+    // Screen device (laptop / TV / phone / keyboard) visible in the photo?
+    double deviceScore = 0;
+    String? device;
+    if (prep.pose != null) {
+      try {
+        final d = await ScreenDeviceDetector.analyze(prep.pose!);
+        deviceScore = d.score;
+        device = d.device;
+      } catch (e) {
+        deviceScore = 0; // detector unavailable -> other checks only
+      }
+    }
+
+    // Evidence-based screen decision.
+    final modelScreen = probs["screen"] ?? 0.0;
+    double screenP;
+    String screenEvidence = "";
+    if (modelScreen >= screenSureMin) {
+      screenP = modelScreen; // clearly a photo of a screen
+    } else if (device != null && modelScreen >= screenWithEvidenceMin) {
+      screenP = math.max(modelScreen, 0.55); // rejected; strike from 0.60
+      screenEvidence = device;
+    } else if (texture >= textureMin && modelScreen >= screenWithEvidenceMin) {
+      screenP = 0.55; // rejected, no strike
+      screenEvidence = "screen pixel pattern";
+    } else {
+      // No evidence: not treated as a screen photo (kept below the 0.50
+      // reject limit so it is still visible in the AI Test Lab).
+      screenP = math.min(modelScreen, 0.45);
+    }
+    final isScreen = screenP >= AiveService.screenRejectMin;
+    // When the photo is not a screen photo, measure the category without the
+    // share the model gave to "screen" (otherwise a hazy photo of a real
+    // accident loses its accident score to the screen class).
+    double cat(String label) {
+      final p = probs[label] ?? 0.0;
+      if (isScreen || modelScreen <= 0 || modelScreen >= 1) return p;
+      return (p / (1 - modelScreen)).clamp(0.0, 1.0).toDouble();
+    }
     final personP = probs["person"] ?? 0.0;
 
     double? raw;
@@ -164,7 +216,7 @@ class TfliteImageClassifier implements ImageClassifier {
       // Fight = incident model "fighting" or the fight-pose check.
       // (The harassment model is not used here: on our tests it also called
       // hugs and handshakes violent, 13% of such photos.)
-      raw = probs["fighting"] ?? 0.0;
+      raw = cat("fighting");
       if (prep.pose != null) {
         try {
           final p = await PoseFightDetector.analyze(prep.pose!);
@@ -175,13 +227,14 @@ class TfliteImageClassifier implements ImageClassifier {
         }
       }
     } else if (_incidentLabelFor.containsKey(category)) {
-      raw = probs[_incidentLabelFor[category]] ?? 0.0;
+      raw = cat(_incidentLabelFor[category]!);
     }
 
     return ImageAnalysis(
       categoryScore: raw,
       rawProbability: raw,
       screenProbability: screenP,
+      screenEvidence: screenEvidence,
       personProbability: personP,
       topLabel: topLabel,
       topProbability: topP,
@@ -192,14 +245,15 @@ class TfliteImageClassifier implements ImageClassifier {
           "violence (harassment model)": h["harassment"]!,
         if (poseScore != null) "fight pose": poseScore,
         "screen texture": texture,
+        "screen device${device != null ? " ($device)" : ""}": deviceScore,
       },
     );
   }
 }
 
 /// Photo -> [1, size, size, 3] float32 RGB 0..255 (whole photo resized to
-/// size x size with area averaging, like the training images) and, for
-/// Fight, the letterboxed input of the pose model.
+/// size x size with area averaging, like the training images) and the
+/// letterboxed 320 x 320 input of the pose model / device detector.
 ({Float32List input, PoseInput? pose, List<Float32List> patches})? _preprocess(
     Uint8List bytes, int size, bool withPose) {
   final decoded = img.decodeImage(bytes);

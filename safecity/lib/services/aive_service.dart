@@ -79,8 +79,12 @@ class ImageAnalysis {
   final double? categoryScore;
   final double? rawProbability;
 
-  /// Probability that the photo was taken of a screen (recapture).
+  /// Probability that the photo was taken of a screen (recapture), after
+  /// the evidence-based decision in TfliteImageClassifier.
   final double screenProbability;
+
+  /// What showed it is a screen photo ("laptop", "mobile phone", ...), or "".
+  final String screenEvidence;
 
   /// Probability that people are visible in the photo.
   final double personProbability;
@@ -99,6 +103,7 @@ class ImageAnalysis {
     required this.categoryScore,
     this.rawProbability,
     this.screenProbability = 0,
+    this.screenEvidence = "",
     this.personProbability = 0,
     this.topLabel = "",
     this.topProbability = 0,
@@ -253,11 +258,12 @@ class AiveService {
   // with fists next to a calm friend reached 0.55-0.70 "fighting".
   static const double fightModelMin = 0.80;
   static const double personPassMin = 0.50; // Harassment: people visible
-  // Photo of a screen: rejected from 0.50. Model v10 is trained on real
-  // photos of laptop / phone screens from our own test videos (UFC picture
-  // on a laptop, accident picture on a phone): 93-97 % of those frames caught,
-  // 0 live camera frames flagged, about 2 % of real incident photos.
-  // From 0.60 it is clear enough to count as a strike.
+  // Photo of a screen: rejected from 0.50, strike from 0.60. The screen score
+  // is evidence based (TfliteImageClassifier): picture model >= 0.90, or a
+  // visible laptop / TV / phone / keyboard, or the screen pixel pattern,
+  // together with picture model >= 0.30. Hazy live photos are no longer
+  // rejected (our misty park fight photos: 66 % -> 0 %); photos of screens
+  // from our test videos: 75-90 % caught.
   static const double screenRejectMin = 0.50;
   static const double screenStrikeMin = 0.60;
   static const double otherIncidentMin = 0.80; // clearly another incident
@@ -280,9 +286,11 @@ class AiveService {
         passed: false,
         score: 0,
         flags: [
-          screen >= screenStrikeMin
-              ? "Photo appears to be taken of a screen, not a live scene"
-              : "Photo may show a phone / laptop screen - take a live photo of the scene"
+          a.screenEvidence.isNotEmpty && a.screenEvidence != "screen pixel pattern"
+              ? "Photo shows a ${a.screenEvidence} with a picture on it - take a live photo of the scene"
+              : screen >= screenStrikeMin
+                  ? "Photo appears to be taken of a screen, not a live scene"
+                  : "Photo may show a phone / laptop screen - take a live photo of the scene"
         ],
         screenScore: screen,
         label: "screen",

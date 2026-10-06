@@ -19,7 +19,8 @@
 //
 //    deduction_i = W(category) x T(age) x D(distance) x duplicates factor
 //
-//    W  Fire 25 · Accident 20 · Fight 15 · Harassment 12 · Road Damage 6
+//    W  Fire 3 · Accident 3 · Fight 2 · Harassment 2 · Road Damage 2
+//       (small points so that a few incidents do not push an area to 0)
 //    T  age <= 1 day 1.0 · <= 7 days 0.7 · <= 30 days 0.4 · <= 90 days 0.2 ·
 //       older 0
 //    D  distance <= R/3 1.0 · <= 2R/3 0.6 · <= R 0.3 · outside R 0
@@ -37,11 +38,11 @@
 //    85-100 Low · 70-84 Medium · 40-69 Medium-High · 0-39 High
 //
 // TEST CASES (centre of a 3 km radius, all reports today):
-//   one fire                       100 - 25            = 75 Safe
-//   two different accidents        100 - 20 - 20       = 60 Moderate
-//   one accident reported by 2     100 - 20 x 1.25     = 75 Safe
-//   one road damage                100 - 6             = 94 Safe
-//   fire older than 90 days        100 - 25 x 0        = 100 Safe
+//   one fire                       100 - 3             = 97 Safe
+//   two different accidents        100 - 3 - 3         = 94 Safe
+//   one accident reported by 2     100 - 3 x 1.25      = 96 Safe
+//   one road damage                100 - 2             = 98 Safe
+//   fire older than 90 days        100 - 3 x 0         = 100 Safe
 
 import 'dart:math' as math;
 
@@ -146,11 +147,11 @@ class SafetyScoreService {
 
   /// Points an incident takes away from 100 (category points).
   static const Map<String, double> categoryPoints = {
-    "Fire": 25,
-    "Accident": 20,
-    "Fight": 15,
-    "Harassment": 12,
-    "Road Damage": 6,
+    "Fire": 3,
+    "Accident": 3,
+    "Fight": 2,
+    "Harassment": 2,
+    "Road Damage": 2,
   };
 
   /// Kept for older callers: same order as [categoryPoints].
