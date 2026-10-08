@@ -45,6 +45,7 @@ class _Pose {
   final List<List<double>?> wristShoulder = []; // [wx, wy, sx, sy] (s may be missing)
   final List<List<double>> wrists = []; // [wx, wy]
   final List<List<double>> faceNeck = []; // nose, eyes, ears and neck points
+  double shoulderTop = double.infinity; // highest shoulder (smallest y)
 }
 
 class PoseFightDetector {
@@ -179,6 +180,9 @@ class PoseFightDetector {
       final f = _pt(p.kp, i, ar);
       if (f != null) q.faceNeck.add(f);
     }
+    for (final p0 in sh) {
+      q.shoulderTop = math.min(q.shoulderTop, p0[1]);
+    }
     if (sh.length == 2) {
       q.faceNeck.add([(sh[0][0] + sh[1][0]) / 2, (sh[0][1] + sh[1][1]) / 2 - 0.12 * q.torso]);
     }
@@ -214,8 +218,11 @@ class PoseFightDetector {
       final wx = ws[0], wy = ws[1], sx = ws[2], sy = ws[3];
       final reach = math.sqrt(math.pow(wx - sx, 2) + math.pow(wy - sy, 2)) / p.torso;
       if (reach < 0.6) continue;
-      final handInHand = q.wrists.any((w) =>
-          math.sqrt(math.pow(wx - w[0], 2) + math.pow(wy - w[1], 2)) < 0.3 * q.torso);
+      // Hands holding each other below the shoulders = handshake. At the
+      // neck the other person's hand is usually pushing the attacker away.
+      final handInHand = wy > q.shoulderTop &&
+          q.wrists.any((w) =>
+              math.sqrt(math.pow(wx - w[0], 2) + math.pow(wy - w[1], 2)) < 0.3 * q.torso);
       if (handInHand) continue;
       for (final f in q.faceNeck) {
         if (math.sqrt(math.pow(wx - f[0], 2) + math.pow(wy - f[1], 2)) < 0.5 * q.torso) {
