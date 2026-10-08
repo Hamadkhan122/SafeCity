@@ -972,7 +972,9 @@ class _MapScreenState extends State<MapScreen> {
   /// fastest one only when the safety difference is significant
   /// (>= [significantSafetyGain] points) AND the detour is reasonable
   /// (at most 50 % or 10 minutes longer than the fastest route).
-  static const int significantSafetyGain = 10;
+  // Small category points (Fire 3, Accident 3, others 2) give small score
+  // differences: one incident near a route already makes it ~2 points worse.
+  static const int significantSafetyGain = 2;
   static const double maxDetourFactor = 1.5;
   static const int maxDetourExtraSeconds = 600;
 
