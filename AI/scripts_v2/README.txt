@@ -129,9 +129,11 @@ FIGHT-PAIR MODEL (30_fight_pair_classifier.py)
 ----------------------------------------------
 Handshakes, hugs and high fives were accepted as Fight by the pose rule. Now
 the upper-body crop of the two people is checked by fight_pair.tflite:
-Fight = model "fighting" >= 0.80 OR (pose rule >= 0.5 AND fight-pair >= 0.70).
-Held-out tests: handshake 16 % -> 3 %, high five 87 % -> 7 %, hug 10 % -> 2 %;
-our staged park fight 83 % accepted.
+Fight = model "fighting" >= 0.80 OR (pose rule >= 0.5 AND fight-pair >= 0.55)
+OR (hand on the other person's face / neck AND fight-pair >= 0.40).
+Fight-pair score = average of the crop and its mirror image.
+Held-out tests: handshake 16 % -> 4 %, high five 87 % -> 11 %, hug 10 % -> 3 %;
+staged fights (park, choke while sitting) accepted; people talking rejected.
 
 KNOWN LIMITS
 ------------

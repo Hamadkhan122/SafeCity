@@ -104,10 +104,15 @@ class TfliteImageClassifier implements ImageClassifier {
   /// Fight-pair score 0..1 for the two people in [box] (photo-relative).
   static Future<double> _fightPair(img.Image photo, List<double> box) async {
     final it = _fightPairInterpreter ??= await Interpreter.fromAsset(_fightPairAsset);
-    final input = _pairCrop(photo, box);
-    final out = [List<double>.filled(1, 0.0)];
-    it.run(input.buffer, out);
-    return out[0][0].clamp(0.0, 1.0).toDouble();
+    // Crop and its mirror image, averaged (as in testing).
+    var sum = 0.0;
+    for (final mirror in const [false, true]) {
+      final input = _pairCrop(photo, box, mirror: mirror);
+      final out = [List<double>.filled(1, 0.0)];
+      it.run(input.buffer, out);
+      sum += out[0][0];
+    }
+    return (sum / 2).clamp(0.0, 1.0).toDouble();
   }
 
   static const _textureAsset = "assets/models/screen_texture.tflite";
@@ -228,6 +233,7 @@ class TfliteImageClassifier implements ImageClassifier {
     double? raw;
     double? poseScore;
     double? pairScore;
+    bool grab = false;
     Map<String, double> h = const {};
     if (category == "Harassment") {
       h = await _run(_harassment, input);
@@ -241,7 +247,8 @@ class TfliteImageClassifier implements ImageClassifier {
         try {
           final p = await PoseFightDetector.analyze(prep.pose!);
           poseScore = p.score;
-          if (p.score >= AiveService.fightPassMin && p.pair != null) {
+          grab = p.grab;
+          if ((p.score >= AiveService.fightPassMin || p.grab) && p.pair != null) {
             try {
               pairScore = await _fightPair(prep.small, p.pair!);
             } catch (e) {
@@ -250,8 +257,7 @@ class TfliteImageClassifier implements ImageClassifier {
           }
           // Contact pose counts only when the fight-pair model agrees that it
           // is a fight and not a handshake / hug.
-          final poseFight = p.score >= AiveService.fightPassMin &&
-              (pairScore == null || pairScore >= AiveService.fightPairMin);
+          final poseFight = AiveService.poseFight(p.score, p.grab, pairScore);
           raw = math.max(raw, poseFight ? math.max(p.score, pairScore ?? 0.0) : 0.0);
         } catch (e) {
           // pose model unavailable -> keep the incident model's result
@@ -276,6 +282,7 @@ class TfliteImageClassifier implements ImageClassifier {
           "violence (harassment model)": h["harassment"]!,
         if (poseScore != null) "fight pose": poseScore,
         if (pairScore != null) "fight pair": pairScore,
+        if (poseScore != null) "fight grab": grab ? 1.0 : 0.0,
         "screen texture": texture,
         "screen device${device != null ? " ($device)" : ""}": deviceScore,
       },
@@ -333,7 +340,7 @@ class TfliteImageClassifier implements ImageClassifier {
 /// Crop of the two people found by the pose rule, like the training crops of
 /// the fight-pair model: their joint box, upper 65 % (heads, arms, upper
 /// bodies), 8 % margin, resized to 224 x 224, raw RGB 0..255.
-Float32List _pairCrop(img.Image photo, List<double> box) {
+Float32List _pairCrop(img.Image photo, List<double> box, {bool mirror = false}) {
   final w = photo.width.toDouble(), h = photo.height.toDouble();
   var x1 = box[0] * w, y1 = box[1] * h, x2 = box[2] * w, y2 = box[3] * h;
   y2 = y1 + 0.65 * (y2 - y1);
@@ -352,7 +359,7 @@ Float32List _pairCrop(img.Image photo, List<double> box) {
   var i = 0;
   for (var y = 0; y < 224; y++) {
     for (var x = 0; x < 224; x++) {
-      final p = r.getPixel(x, y);
+      final p = r.getPixel(mirror ? 223 - x : x, y);
       out[i++] = (p.rNormalized * 255.0).toDouble();
       out[i++] = (p.gNormalized * 255.0).toDouble();
       out[i++] = (p.bNormalized * 255.0).toDouble();

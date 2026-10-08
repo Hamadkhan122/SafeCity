@@ -43,6 +43,8 @@ class _Pose {
   bool raised = false, kick = false, seated = false;
   int guard = 0;
   final List<List<double>?> wristShoulder = []; // [wx, wy, sx, sy] (s may be missing)
+  final List<List<double>> wrists = []; // [wx, wy]
+  final List<List<double>> faceNeck = []; // nose, eyes, ears and neck points
 }
 
 class PoseFightDetector {
@@ -78,7 +80,7 @@ class PoseFightDetector {
   /// two people that gave the score (x1, y1, x2, y2 relative to the photo,
   /// null when no pair was found). The box is checked by the fight-pair
   /// model (friendly contact such as a handshake vs a real fight).
-  static Future<({double score, int people, List<double>? pair})> analyze(
+  static Future<({double score, int people, List<double>? pair, bool grab})> analyze(
       PoseInput input) async {
     final it = _interpreter ??= await Interpreter.fromAsset(asset);
     final out = List.generate(1, (_) => List.generate(56, (_) => List<double>.filled(2100, 0.0)));
@@ -89,6 +91,7 @@ class PoseFightDetector {
       score: r.score,
       people: people.where((p) => p.score >= 0.5).length,
       pair: r.pair,
+      grab: r.grab,
     );
   }
 
@@ -152,6 +155,7 @@ class PoseFightDetector {
     ]) {
       final s = _pt(p.kp, arm[0], ar), e = _pt(p.kp, arm[1], ar), w = _pt(p.kp, arm[2], ar);
       if (w != null) q.wristShoulder.add(s == null ? null : [w[0], w[1], s[0], s[1]]);
+      if (w != null) q.wrists.add(w);
       if (s != null && w != null && w[1] < s[1] - 0.05 * q.torso) q.raised = true;
       if (s != null && e != null && w != null &&
           w[1] < e[1] - 0.2 * q.torso &&
@@ -169,6 +173,14 @@ class PoseFightDetector {
           a[1] < o[1] - 0.8 * q.torso) {
         q.kick = true;
       }
+    }
+    // Face and neck points (target of a grab / choke).
+    for (final i in const [0, 1, 2, 3, 4]) {
+      final f = _pt(p.kp, i, ar);
+      if (f != null) q.faceNeck.add(f);
+    }
+    if (sh.length == 2) {
+      q.faceNeck.add([(sh[0][0] + sh[1][0]) / 2, (sh[0][1] + sh[1][1]) / 2 - 0.12 * q.torso]);
     }
     // Sitting: knees at about hip height (cross-legged, on a chair).
     final kn = [_pt(p.kp, 13, ar), _pt(p.kp, 14, ar)].whereType<List<double>>().toList();
@@ -193,7 +205,28 @@ class PoseFightDetector {
     return false;
   }
 
-  static ({double score, List<double>? pair}) _rule(List<_Person> people, double ar) {
+  /// Hand of [p] on the face / neck of [q] (grab, choke, slap) with the arm
+  /// stretched out - not a handshake (hands holding each other).
+  static bool _grab(_Pose p, _Pose q) {
+    if (q.faceNeck.isEmpty) return false;
+    for (final ws in p.wristShoulder) {
+      if (ws == null) continue;
+      final wx = ws[0], wy = ws[1], sx = ws[2], sy = ws[3];
+      final reach = math.sqrt(math.pow(wx - sx, 2) + math.pow(wy - sy, 2)) / p.torso;
+      if (reach < 0.6) continue;
+      final handInHand = q.wrists.any((w) =>
+          math.sqrt(math.pow(wx - w[0], 2) + math.pow(wy - w[1], 2)) < 0.3 * q.torso);
+      if (handInHand) continue;
+      for (final f in q.faceNeck) {
+        if (math.sqrt(math.pow(wx - f[0], 2) + math.pow(wy - f[1], 2)) < 0.5 * q.torso) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  static ({double score, List<double>? pair, bool grab}) _rule(List<_Person> people, double ar) {
     final ps = people
         .where((p) => p.score >= 0.5)
         .take(6)
@@ -203,6 +236,7 @@ class PoseFightDetector {
     var best = 0.0;
     var bestD = double.infinity;
     List<double>? pair;
+    var grab = false;
     for (var a = 0; a < ps.length; a++) {
       for (var b = a + 1; b < ps.length; b++) {
         final pa = ps[a], pb = ps[b];
@@ -223,6 +257,11 @@ class PoseFightDetector {
             !pa.seated && !pb.seated) {
           s = math.max(s, 0.7);
         }
+        // Hand on the other person's face / neck (grab, choke).
+        if (_grab(pa, pb) || _grab(pb, pa)) {
+          s = math.max(s, 0.6);
+          grab = true;
+        }
         if (s > best || (s == best && s > 0 && d < bestD)) {
           best = s;
           bestD = d;
@@ -235,6 +274,6 @@ class PoseFightDetector {
         }
       }
     }
-    return (score: best, pair: pair);
+    return (score: best, pair: pair, grab: grab);
   }
 }
