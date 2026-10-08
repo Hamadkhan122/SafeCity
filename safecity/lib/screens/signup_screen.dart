@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'home_screen.dart';
 import 'login_screen.dart';
+import '../services/sos_chat_service.dart';
 
 class SignupScreen extends StatefulWidget {
   const SignupScreen({super.key});
@@ -528,6 +529,9 @@ class _SignupScreenState extends State<SignupScreen> {
 
                                         "phone": phoneController.text.trim(),
 
+                                        "phoneKey": SosChatService.phoneKey(
+                                            phoneController.text.trim()),
+
                                         "createdAt": Timestamp.now(),
                                       });
 
@@ -641,8 +645,9 @@ class _SignupScreenState extends State<SignupScreen> {
 
                           const SizedBox(height: 25),
 
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
+                          Wrap(
+                            alignment: WrapAlignment.center,
+                            crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
                               const Text(
                                 "Already have an account?",

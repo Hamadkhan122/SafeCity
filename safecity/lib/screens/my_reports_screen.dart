@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'incident_history_screen.dart';
 
 class MyReportsScreen extends StatelessWidget {
   const MyReportsScreen({super.key});
@@ -8,7 +9,6 @@ class MyReportsScreen extends StatelessWidget {
   static const Map<String, IconData> categoryIcons = {
     "Accident": Icons.car_crash,
     "Fire": Icons.local_fire_department,
-    "Theft": Icons.report,
     "Road Damage": Icons.construction,
     "Fight": Icons.front_hand,
     "Harassment": Icons.person_off,
@@ -17,7 +17,6 @@ class MyReportsScreen extends StatelessWidget {
   static const Map<String, Color> categoryColors = {
     "Accident": Colors.redAccent,
     "Fire": Colors.orangeAccent,
-    "Theft": Colors.purpleAccent,
     "Road Damage": Colors.brown,
     "Fight": Colors.deepOrange,
     "Harassment": Colors.pinkAccent,
@@ -25,14 +24,18 @@ class MyReportsScreen extends StatelessWidget {
 
   static Color statusColor(String status) {
     switch (status) {
+      case "Verified": // AIVE
       case "Resolved":
         return Colors.green;
+      case "Partially Verified": // AIVE
+        return Colors.orange;
+      case "Suspicious": // AIVE
       case "Rejected":
         return Colors.red;
       case "In Progress":
         return Colors.blue;
       default:
-        return Colors.orange;
+        return Colors.grey;
     }
   }
 
@@ -150,7 +153,10 @@ class MyReportsScreen extends StatelessWidget {
 
                     final category = data["category"]?.toString() ?? "Incident";
                     final description = data["description"]?.toString() ?? "";
-                    final status = data["status"]?.toString() ?? "Pending";
+                    final rawStatus = data["status"]?.toString() ?? "Pending";
+                    // AIVE "Suspicious" is shown to the user as "Rejected".
+                    final status =
+                        rawStatus == "Suspicious" ? "Rejected" : rawStatus;
                     final address = data["address"]?.toString() ?? "";
                     final reportId = data["reportId"]?.toString() ?? "";
                     final createdAt = data["createdAt"] as Timestamp?;
@@ -158,7 +164,18 @@ class MyReportsScreen extends StatelessWidget {
                     final icon = categoryIcons[category] ?? Icons.report_problem;
                     final color = categoryColors[category] ?? Colors.blueGrey;
 
-                    return Container(
+                    return GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => IncidentDetailScreen(
+                            data: data,
+                            docId: docs[index].id,
+                          ),
+                        ),
+                      ),
+                      child: Container(
                       margin: const EdgeInsets.only(bottom: 14),
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
@@ -266,6 +283,7 @@ class MyReportsScreen extends StatelessWidget {
                           ),
                         ],
                       ),
+                    ),
                     );
                   },
                 );

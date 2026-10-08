@@ -3,12 +3,16 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:geocoding/geocoding.dart';
 import 'my_reports_screen.dart';
 import '../services/notification_service.dart';
+import '../services/aive_service.dart';
+import '../services/tflite_image_classifier.dart';
+import '../services/cloudinary_service.dart';
+import '../widgets/photo_check_indicator.dart';
+import '../services/report_strike_service.dart';
 
 class ReportScreen extends StatefulWidget {
   const ReportScreen({super.key});
@@ -19,7 +23,6 @@ class ReportScreen extends StatefulWidget {
 
 class _ReportScreenState extends State<ReportScreen> {
   final FirebaseFirestore firestore = FirebaseFirestore.instance;
-  final FirebaseStorage storage = FirebaseStorage.instance;
   final FirebaseAuth auth = FirebaseAuth.instance;
   final ImagePicker picker = ImagePicker();
   final TextEditingController descriptionController = TextEditingController();
@@ -28,22 +31,33 @@ class _ReportScreenState extends State<ReportScreen> {
   static const int minDescLength = 20;
   static const int maxDescLength = 250;
 
+  /// Real submit steps (the progress card shows which one is running).
   static const List<String> _loadingMessages = [
-    "Uploading...",
-    "Saving Report...",
-    "Please Wait...",
+    "Getting your exact location",
+    "Uploading photo",
+    "AI verifying report",
+    "Saving report",
   ];
 
   final List<Map<String, String>> categories = const [
     {"label": "Accident", "emoji": "🚗"},
     {"label": "Fire", "emoji": "🔥"},
-    {"label": "Theft", "emoji": "⚠️"},
     {"label": "Road Damage", "emoji": "🛣"},
     {"label": "Fight", "emoji": "👊"},
     {"label": "Harassment", "emoji": "👤"},
   ];
 
   File? image;
+  DateTime? imageCapturedAt; // AIVE timestamp validation
+
+  // Live AI photo check (runs right after capture / category change)
+  ImageAnalysis? _photoAnalysis;
+  String? _photoAnalysisCategory;
+  bool _photoChecking = false;
+  int _photoCheckRun = 0;
+
+  // False-report strikes / restriction (ReportStrikeService)
+  ReporterStanding? _standing;
   bool loading = false;
   Position? currentPosition;
   String selectedCategory = "Accident";
@@ -64,6 +78,7 @@ class _ReportScreenState extends State<ReportScreen> {
     super.initState();
 
     getCurrentLocation();
+    _loadStanding();
 
     descriptionController.addListener(() {
       setState(() {
@@ -161,11 +176,67 @@ class _ReportScreenState extends State<ReportScreen> {
 
     setState(() {
       image = selected;
+      imageCapturedAt = DateTime.now();
     });
+    _runPhotoCheck();
   }
 
   void removeImage() {
-    setState(() => image = null);
+    setState(() {
+      image = null;
+      imageCapturedAt = null;
+      _resetPhotoCheck();
+    });
+  }
+
+  Future<void> _loadStanding() async {
+    try {
+      final s =
+          await ReportStrikeService().standing(auth.currentUser?.uid);
+      if (mounted) setState(() => _standing = s);
+    } catch (e) {
+      debugPrint("Standing check failed: $e");
+    }
+  }
+
+  void _resetPhotoCheck() {
+    _photoCheckRun++; // ignore any check still running
+    _photoAnalysis = null;
+    _photoAnalysisCategory = null;
+    _photoChecking = false;
+  }
+
+  /// Runs the on-device image model on the captured photo for the selected
+  /// category and shows the result under the photo (red -> yellow -> green).
+  Future<void> _runPhotoCheck() async {
+    final file = image;
+    if (file == null) return;
+    final run = ++_photoCheckRun;
+    final category = selectedCategory;
+    setState(() {
+      _photoChecking = true;
+      _photoAnalysis = null;
+      _photoAnalysisCategory = null;
+    });
+
+    ImageAnalysis? result;
+    try {
+      final r = await Future.wait<dynamic>([
+        const TfliteImageClassifier().analyze(category, file),
+        // keep the animation visible for a moment even on fast phones
+        Future.delayed(const Duration(milliseconds: 1200)),
+      ]);
+      result = r[0] as ImageAnalysis?;
+    } catch (e) {
+      debugPrint("Photo check failed: $e");
+    }
+
+    if (!mounted || run != _photoCheckRun) return; // outdated check
+    setState(() {
+      _photoChecking = false;
+      _photoAnalysis = result;
+      _photoAnalysisCategory = category;
+    });
   }
 
   // ===============================
@@ -199,6 +270,11 @@ class _ReportScreenState extends State<ReportScreen> {
   // submitReport()
   // ===============================
   Future<void> submitReport() async {
+    if (_standing?.isRestricted == true) {
+      _showStrikeDetails();
+      return;
+    }
+
     if (!_formKey.currentState!.validate()) {
       return;
     }
@@ -210,30 +286,87 @@ class _ReportScreenState extends State<ReportScreen> {
       return;
     }
 
+    // AIVE needs a live photo to verify the incident.
+    if (image == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text("Please capture a live photo of the incident.")),
+      );
+      return;
+    }
+
     setState(() {
       loading = true;
       _loadingMessageIndex = 0;
     });
 
     _loadingMessageTimer?.cancel();
-    _loadingMessageTimer = Timer.periodic(const Duration(milliseconds: 1200), (
-      _,
-    ) {
-      if (!mounted) return;
-      setState(() {
-        _loadingMessageIndex =
-            (_loadingMessageIndex + 1) % _loadingMessages.length;
-      });
-    });
+    void step(int i) {
+      if (mounted) setState(() => _loadingMessageIndex = i);
+    }
 
     final messenger = ScaffoldMessenger.of(context);
 
     try {
       final reportId = await _generateReportId();
 
-      String imageUrl = "";
-      // Image upload abhi skip — Firebase Storage baad me add karenge
+      // ---- Refresh GPS fix right before submit (AIVE timestamp check) ----
+      try {
+        currentPosition = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+            timeLimit: Duration(seconds: 10),
+          ),
+        );
+      } catch (_) {
+        // keep the earlier fix; AIVE will score its age
+      }
 
+      // ---- Upload captured photo to Cloudinary (free storage) ----
+      step(1);
+      String imageUrl = "";
+      if (image != null) {
+        try {
+          imageUrl =
+              await CloudinaryService.uploadReportImage(image!, reportId);
+        } catch (e) {
+          debugPrint("Image upload failed: $e");
+        }
+      }
+
+      // ---- AIVE: automatic verification (no admin) ----
+      step(2);
+      // If AIVE fails for any reason the report is still saved exactly
+      // like before (status "Pending") — submission never breaks.
+      AiveResult aive;
+      try {
+        aive = await AiveService(classifier: const TfliteImageClassifier())
+            .verify(
+              category: selectedCategory,
+              position: currentPosition!,
+              userId: auth.currentUser?.uid,
+              description: descriptionController.text.trim(),
+              image: image,
+              imageCapturedAt: imageCapturedAt,
+              imageAnalysis: _photoAnalysisCategory == selectedCategory
+                  ? _photoAnalysis
+                  : null,
+            )
+            .timeout(const Duration(seconds: 20));
+      } catch (e) {
+        debugPrint("AIVE failed: $e");
+        aive = const AiveResult(
+          status: "Pending",
+          confidence: 0.5,
+          imageScore: 0,
+          gpsScore: 0,
+          timeScore: 0,
+          nearbyScore: 0,
+          flags: ["AI verification unavailable — saved as Pending"],
+        );
+      }
+
+      step(3);
       await firestore.collection("reports").add({
         "reportId": reportId,
         "category": selectedCategory,
@@ -243,9 +376,16 @@ class _ReportScreenState extends State<ReportScreen> {
         "address": currentAddress ?? "",
         "gpsAccuracy": currentPosition!.accuracy,
         "imageUrl": imageUrl,
-        "status": "Pending",
+        "imageCapturedAt": imageCapturedAt != null
+            ? Timestamp.fromDate(imageCapturedAt!)
+            : null,
+        "status": aive.status,
+        "confidence": aive.confidence,
+        "aive": aive.toMap(),
         "createdAt": FieldValue.serverTimestamp(),
         "userId": auth.currentUser?.uid,
+        // false-report strike (proof = this report's photo + AIVE flags)
+        "strike": ReportStrikeService.strikeFromFlags(aive.flags),
       });
 
       final locationPhrase =
@@ -253,22 +393,30 @@ class _ReportScreenState extends State<ReportScreen> {
           ? " near $currentAddress"
           : "";
 
-      await NotificationService().createNotification(
-        title: "$selectedCategory Reported",
-        message:
-            "A ${selectedCategory.toLowerCase()} has been reported$locationPhrase.",
-        category: selectedCategory,
-        latitude: currentPosition!.latitude,
-        longitude: currentPosition!.longitude,
-      );
+      // UC-10 BR-1: only verified reports notify nearby users.
+      if (aive.isPublic) {
+        await NotificationService().createNotification(
+          title: "$selectedCategory Reported",
+          message:
+              "A ${selectedCategory.toLowerCase()} has been reported$locationPhrase.",
+          category: selectedCategory,
+          latitude: currentPosition!.latitude,
+          longitude: currentPosition!.longitude,
+          userId: auth.currentUser?.uid,
+        );
+      }
 
       descriptionController.clear();
       image = null;
+      imageCapturedAt = null;
+      _resetPhotoCheck();
       setState(() {});
 
       if (!context.mounted) return;
 
-      await _showSuccessDialog(reportId);
+      await _loadStanding(); // a new strike may restrict the account
+      if (!context.mounted) return;
+      await _showSuccessDialog(reportId, aive);
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text(e.toString())));
     } finally {
@@ -281,7 +429,7 @@ class _ReportScreenState extends State<ReportScreen> {
     }
   }
 
-  Future<void> _showSuccessDialog(String reportId) {
+  Future<void> _showSuccessDialog(String reportId, AiveResult aive) {
     return showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -301,13 +449,100 @@ class _ReportScreenState extends State<ReportScreen> {
               ),
             ],
           ),
-          content: Column(
+          content: SingleChildScrollView(
+            child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text(
-                "Thank you. Your report has been received.\n\nNearby users will be notified.",
+              Text(
+                aive.isPublic
+                    ? "Thank you. Your report has been received.\n\nNearby users will be notified."
+                    : "Your report has been received but was flagged by AI verification and will not be shown publicly.",
                 textAlign: TextAlign.center,
               ),
+              const SizedBox(height: 12),
+              Text(
+                "AI Verification: ${aive.status == AiveStatus.suspicious ? "Rejected" : aive.status} "
+                "(${(aive.confidence * 100).round()}/100 points)",
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: aive.status == AiveStatus.verified
+                      ? Colors.green
+                      : aive.status == AiveStatus.suspicious
+                          ? Colors.red
+                          : Colors.grey,
+                ),
+              ),
+              if (ReportStrikeService.strikeFromFlags(aive.flags) != null) ...[
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.red.shade200),
+                  ),
+                  child: Text(
+                    "⚠ False-report warning "
+                    "${_standing?.count ?? 1}/${ReportStrikeService.restrictAt}: "
+                    "${StrikeReason.label(ReportStrikeService.strikeFromFlags(aive.flags)!)}"
+                    "${_standing?.isRestricted == true ? "\nReporting is now restricted." : ""}",
+                    style: TextStyle(
+                        color: Colors.red.shade800,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ],
+              if (aive.checks.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                if (!aive.isVerified)
+                  Text(
+                    "Rejected because: "
+                    "${aive.failedChecks.map((c) => c.name).join(", ")}",
+                    style: const TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.red),
+                    textAlign: TextAlign.center,
+                  ),
+                const SizedBox(height: 6),
+                // Every check with pass / fail and the reason
+                for (final c in aive.checks)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          c.passed ? Icons.check_circle : Icons.cancel,
+                          size: 16,
+                          color: c.passed ? Colors.green : Colors.red,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            "${c.title}: ${c.detail}",
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: c.passed
+                                    ? Colors.black54
+                                    : Colors.red.shade700),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ] else if (aive.flags.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                ...aive.flags.map(
+                  (f) => Text(
+                    "• $f",
+                    style: const TextStyle(fontSize: 12, color: Colors.black54),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
               Container(
                 padding: const EdgeInsets.symmetric(
@@ -324,6 +559,7 @@ class _ReportScreenState extends State<ReportScreen> {
                 ),
               ),
             ],
+          ),
           ),
           actionsAlignment: MainAxisAlignment.spaceBetween,
           actions: [
@@ -402,6 +638,7 @@ class _ReportScreenState extends State<ReportScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (Navigator.of(context).canPop())
           IconButton(
             onPressed: () => Navigator.of(context).maybePop(),
             icon: const Icon(Icons.arrow_back, color: Colors.white),
@@ -561,9 +798,12 @@ class _ReportScreenState extends State<ReportScreen> {
 
         return GestureDetector(
           onTap: () {
+            if (selectedCategory == cat["label"]) return;
             setState(() {
               selectedCategory = cat["label"]!;
             });
+            // the photo check depends on the category -> re-check
+            if (image != null) _runPhotoCheck();
           },
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 200),
@@ -812,6 +1052,13 @@ class _ReportScreenState extends State<ReportScreen> {
             ),
           ),
           const SizedBox(height: 12),
+          PhotoCheckIndicator(
+            checking: _photoChecking,
+            verdict: _photoChecking
+                ? null
+                : AiveService.photoVerdict(selectedCategory, _photoAnalysis),
+          ),
+          const SizedBox(height: 12),
           Row(
             children: [
               Expanded(
@@ -890,30 +1137,151 @@ class _ReportScreenState extends State<ReportScreen> {
   }
 
   Widget _buildSafetyNotice() {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.orange.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.orange.withOpacity(0.4)),
-      ),
-      child: const Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.warning_amber_rounded, color: Colors.orangeAccent),
-          SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              "Submitting false information may result in account restrictions. Only report genuine incidents.",
-              style: TextStyle(color: Colors.orangeAccent, fontSize: 12.5),
+    final st = _standing;
+    final restricted = st?.isRestricted == true;
+    final warnings = st?.count ?? 0;
+    final color = restricted ? Colors.redAccent : Colors.orangeAccent;
+
+    String text;
+    if (restricted) {
+      final u = st!.restrictedUntil!;
+      text = "Reporting restricted until ${u.day}/${u.month}/${u.year} - "
+          "$warnings false-report warnings in the last 30 days. "
+          "Tap to see the evidence.";
+    } else if (warnings > 0) {
+      text = "You have $warnings/${ReportStrikeService.restrictAt} "
+          "false-report warnings (last 30 days). At "
+          "${ReportStrikeService.restrictAt} reporting is blocked for 7 days. "
+          "Tap to see details.";
+    } else {
+      text = "Submitting false information may result in account "
+          "restrictions. Only report genuine incidents.";
+    }
+
+    return GestureDetector(
+      onTap: warnings > 0 ? _showStrikeDetails : null,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withValues(alpha: 0.4)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(restricted ? Icons.block : Icons.warning_amber_rounded,
+                color: color),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(text,
+                  style: TextStyle(color: color, fontSize: 12.5)),
             ),
-          ),
-        ],
+            if (warnings > 0) Icon(Icons.chevron_right, color: color),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Lists every strike with its proof (report ID, reason, AI evidence,
+  /// photo) so the user can see exactly why they were warned / restricted.
+  void _showStrikeDetails() {
+    final st = _standing;
+    if (st == null) return;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xff0E2A6B),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.6,
+        maxChildSize: 0.9,
+        builder: (_, controller) => ListView(
+          controller: controller,
+          padding: const EdgeInsets.all(16),
+          children: [
+            Text(
+              st.isRestricted
+                  ? "Reporting restricted until "
+                      "${st.restrictedUntil!.day}/${st.restrictedUntil!.month}/${st.restrictedUntil!.year}"
+                  : "False-report warnings: ${st.count}/${ReportStrikeService.restrictAt}",
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 17,
+                  fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              "Warnings are given only for clear evidence of a fake report: "
+              "a photo of a screen, fake GPS, duplicate or spam reports. "
+              "Warnings older than 30 days are removed automatically.",
+              style: TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            for (final s in st.strikes)
+              Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: Colors.white12),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (s.imageUrl.isNotEmpty)
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: Image.network(s.imageUrl,
+                            width: 64,
+                            height: 64,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) =>
+                                const SizedBox(width: 64, height: 64)),
+                      ),
+                    if (s.imageUrl.isNotEmpty) const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text("#${s.reportId} · ${s.category}",
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold)),
+                          Text(
+                              "${s.at.day}/${s.at.month}/${s.at.year} "
+                              "${s.at.hour.toString().padLeft(2, '0')}:"
+                              "${s.at.minute.toString().padLeft(2, '0')}",
+                              style: const TextStyle(
+                                  color: Colors.white54, fontSize: 11)),
+                          const SizedBox(height: 4),
+                          Text(StrikeReason.label(s.reason),
+                              style: const TextStyle(
+                                  color: Colors.redAccent,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 12.5)),
+                          for (final e in s.evidence)
+                            Text("• $e",
+                                style: const TextStyle(
+                                    color: Colors.white60, fontSize: 11)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildSubmitButton() {
+    if (loading) return _buildSubmitProgress();
     return SizedBox(
       width: double.infinity,
       height: 60,
@@ -925,36 +1293,90 @@ class _ReportScreenState extends State<ReportScreen> {
             borderRadius: BorderRadius.circular(18),
           ),
         ),
-        onPressed: loading ? null : submitReport,
-        child: loading
-            ? Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 2.5,
-                    ),
-                  ),
-                  const SizedBox(width: 14),
-                  Text(
-                    _loadingMessages[_loadingMessageIndex],
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              )
-            : const Text(
-                "🚨 Submit Incident Report",
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
-              ),
+        onPressed: _standing?.isRestricted == true ? null : submitReport,
+        child: Text(
+          _standing?.isRestricted == true
+              ? "Reporting restricted"
+              : "🚨 Submit Incident Report",
+          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+        ),
       ),
     );
   }
+
+  /// Shown while the report is being submitted: real step, progress bar
+  /// and a checklist of the 4 steps.
+  Widget _buildSubmitProgress() {
+    final step = _loadingMessageIndex.clamp(0, _loadingMessages.length - 1);
+    final total = _loadingMessages.length;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xff66BB6A)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            "Submitting report · step ${step + 1} of $total",
+            style: const TextStyle(
+                color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+          ),
+          const SizedBox(height: 10),
+          TweenAnimationBuilder<double>(
+            tween: Tween(end: (step + 0.5) / total),
+            duration: const Duration(milliseconds: 600),
+            curve: Curves.easeOut,
+            builder: (_, v, __) => ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: LinearProgressIndicator(
+                value: v,
+                minHeight: 10,
+                backgroundColor: Colors.white12,
+                valueColor: const AlwaysStoppedAnimation(Color(0xff66BB6A)),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          for (int i = 0; i < total; i++)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: i < step
+                        ? const Icon(Icons.check_circle,
+                            color: Color(0xff66BB6A), size: 20)
+                        : i == step
+                            ? const Padding(
+                                padding: EdgeInsets.all(2),
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2.5, color: Colors.white),
+                              )
+                            : const Icon(Icons.radio_button_unchecked,
+                                color: Colors.white38, size: 20),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    _loadingMessages[i],
+                    style: TextStyle(
+                      color: i <= step ? Colors.white : Colors.white54,
+                      fontWeight: i == step ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
 
   Widget _buildTips() {
     const tips = [
